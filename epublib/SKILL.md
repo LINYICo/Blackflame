@@ -2,6 +2,8 @@
 name: epublib
 description: Inspect EPUB 2 and EPUB 3 publications and apply targeted edits to existing metadata and XHTML. Use for package, reading-order, and navigation inspection, metadata corrections, chapter copyediting, or removal of confirmed promotional content. Preserve the source publication and verify the edited copy against its baseline.
 license: MIT
+metadata:
+  version: "1.0.0"
 ---
 
 # EpubLib
