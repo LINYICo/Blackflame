@@ -141,12 +141,42 @@ def inventory(archive, stream):
             }
             for item in manifest
         ]
+        members = {item["id"]: item["member"] for item in items if item["id"] is not None}
+        namespaces = {"opf": OPF, "dc": DC}
+        metadata = {
+            field: root.xpath(f"opf:metadata/dc:{field}/text()", namespaces=namespaces)
+            for field in ("title", "creator", "contributor", "language", "publisher", "date", "identifier")
+        }
+        primary_id = root.get("unique-identifier")
+        primary_identifier = root.xpath(
+            "opf:metadata/dc:identifier[@id=$primary_id]/text()",
+            namespaces=namespaces, primary_id=primary_id or "",
+        )
+        legacy_covers = set(root.xpath("opf:metadata/opf:meta[@name='cover']/@content", namespaces=namespaces))
+        spine = root.find(f"{{{OPF}}}spine")
+        itemrefs = [] if spine is None else spine.findall(f"{{{OPF}}}itemref")
+        spine_items = [
+            {
+                "idref": ref.get("idref"), "member": members.get(ref.get("idref")),
+                "linear": ref.get("linear", "yes"),
+            }
+            for ref in itemrefs
+        ]
+        ncx_ids = root.xpath("opf:spine/@toc", namespaces=namespaces)
         packages.append({
             "member": package, "version": root.get("version"),
-            "titles": root.xpath("opf:metadata/dc:title/text()", namespaces={"opf": OPF, "dc": DC}),
+            "titles": metadata["title"], "metadata": metadata,
+            "primary_identifier": primary_identifier[0] if len(primary_identifier) == 1 else None,
             "manifest": items,
-            "spine": root.xpath("opf:spine/opf:itemref/@idref", namespaces={"opf": OPF}),
-            "ncx_id": root.xpath("opf:spine/@toc", namespaces={"opf": OPF}),
+            "spine": [item["idref"] for item in spine_items if item["idref"] is not None],
+            "spine_items": spine_items,
+            "page_progression_direction": spine.get("page-progression-direction", "default") if spine is not None else None,
+            "ncx_id": ncx_ids, "ncx_member": members.get(ncx_ids[0]) if ncx_ids else None,
+            "nav_members": [item["member"] for item in items if item["member"] and "nav" in item["properties"]],
+            "cover_members": [
+                item["member"] for item in items
+                if item["member"] and ("cover-image" in item["properties"] or item["id"] in legacy_covers)
+            ],
         })
     return {"entry_count": len(names), "protection": sorted(PROTECTION & names), "packages": packages}
 
@@ -322,17 +352,34 @@ def file_state(info):
     return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
 
 
+def spine_signature(book, archive):
+    result = []
+    archive_members = set(archive.namelist())
+    for package in book["packages"]:
+        sequence = [(item["member"], item["linear"]) for item in package["spine_items"]]
+        require(
+            sequence and all(member in archive_members and linear in {"yes", "no"} for member, linear in sequence),
+            f"Cannot resolve reading order for {package['member']}",
+        )
+        result.append((package["member"], package["page_progression_direction"], sequence))
+    return result
+
+
 def verify(args):
     require(args.source.is_file() and args.candidate.is_file(), "Source and candidate must be regular files")
     require(not args.source.samefile(args.candidate), "Source and candidate must be different files")
     reports = args.report_dir.absolute()
     reports.mkdir(parents=True)
     inspections = []
-    for label, path in (("before", args.source), ("after", args.candidate)):
+    spines = []
+    for path in (args.source, args.candidate):
         with path.open("rb") as stream:
             state = file_state(os.fstat(stream.fileno()))
             with ZipFile(stream) as archive:
-                check_zip(archive, stream)
+                if args.preserve_spine:
+                    spines.append(spine_signature(inventory(archive, stream), archive))
+                else:
+                    check_zip(archive, stream)
                 members = archive_hashes(archive)
             stream.seek(0)
             digest = file_digest(stream, "sha256").hexdigest()
@@ -346,7 +393,7 @@ def verify(args):
     after = run_epubcheck(args.epubcheck, args.candidate, reports / "epubcheck-after.json")
     require(file_state(args.source.stat()) == source_state and file_state(args.candidate.stat()) == candidate_state,
             "Source or candidate changed during verification")
-    write_json(reports / "comparison.json", {
+    comparison = {
         "source_sha256": source_hash,
         "candidate_sha256": candidate_hash,
         "added": sorted(added),
@@ -356,7 +403,11 @@ def verify(args):
         "epubcheck_version": after.version,
         "baseline_has_errors": before.has_errors,
         "candidate_has_errors": after.has_errors,
-    })
+    }
+    if args.preserve_spine:
+        comparison["spine_unchanged"] = spines[0] == spines[1]
+    write_json(reports / "comparison.json", comparison)
+    require(comparison.get("spine_unchanged", True), f"Reading order or page progression changed, see {reports}")
     validate_candidate(before, after, reports)
     require(not after.has_errors or args.allow_existing_errors, f"Existing EPUBCheck errors remain, see {reports}")
     print(reports / "comparison.json")
@@ -413,6 +464,7 @@ def main():
     compare = commands.add_parser("verify", help="Compare and validate an independently edited EPUB")
     compare.add_argument("source", type=Path)
     compare.add_argument("candidate", type=Path)
+    compare.add_argument("--preserve-spine", action="store_true", help="Require unchanged reading order and page progression")
     for command in (patch, compare):
         command.add_argument("--report-dir", required=True, type=Path)
         command.add_argument("--epubcheck", default="epubcheck", help="Path to the EPUBCheck executable")

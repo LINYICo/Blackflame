@@ -8,7 +8,7 @@ Run commands from the skill directory. Store the inventory, replacement files, p
 python3 scripts/epub_patch.py inspect book.epub > inventory.json
 ```
 
-The inventory reports the source SHA-256 and lists each OPF package, its manifest, reading order, and NCX identifier. Read navigation targets from the manifest's EPUB 3 navigation document or the EPUB 2 NCX. Resolve relative links from the referring member. Check the decoded paths and fragment identifiers against the original archive.
+The inventory reports the source SHA-256, package metadata, primary identifier, cover and navigation members, and resolved spine entries. Read navigation targets from the manifest's EPUB 3 navigation document or the EPUB 2 NCX. Resolve relative links from the referring member. Check the decoded paths and fragment identifiers against the original archive.
 
 ## Prepare replacements
 
@@ -53,4 +53,4 @@ python3 scripts/epub_patch.py verify book.epub repaired.epub --report-dir report
 - **Exporter markup.** Inspect proprietary attributes before cleanup. If an empty marker contains footnote text, preserve that text in a linked note with a return link. Compare the original and edited chapter text after excluding generated markers and note blocks. Remove remote font declarations if local reader fonts can serve the same role.
 - **Advertising and layout.** Remove promotional assets only after checking all remaining references. Preserve edition matter such as the cover, copyright page, and endorsements about the book itself unless they are in scope. Check typography on narrow and wide viewports, including headings, inline formulas, and note links.
 
-`verify` checks ZIP member integrity, compares EPUBCheck diagnostics, and reports added, removed, and byte-changed members in `comparison.json`. A rename appears as one removal and one addition. Review the comparison against the approved scope and confirm link targets independently. The command accepts a clean candidate from a source with existing errors. An unresolved baseline requires `--allow-existing-errors` and explicit acceptance. New errors or warnings always fail verification.
+`verify` checks ZIP member integrity, compares EPUBCheck diagnostics, and reports added, removed, and byte-changed members in `comparison.json`. A rename appears as one removal and one addition. Add `--preserve-spine` to require the same ordered member paths, linear flags, and page progression. Review the comparison against the approved scope and confirm link targets independently. The command accepts a clean candidate from a source with existing errors. An unresolved baseline requires `--allow-existing-errors` and explicit acceptance. New errors or warnings always fail verification.
