@@ -1,23 +1,26 @@
-# 编辑流程
+# Editing EPUB publications
 
-从技能目录运行命令，替换示例路径。把计划、工作文件和诊断留在任务目录，避免公开书籍内容。
+Run commands from the skill directory. Store the inventory, replacement files, plan, and reports in the task workspace.
 
-## 准备替换文件
+## Inspect the source
 
 ```bash
 python3 scripts/epub_patch.py inspect book.epub > inventory.json
 ```
 
-- **元数据。** 从清单选定实际 OPF 路径。以 OPF 和 Dublin Core 命名空间定位现有字段。多个作者或标题时用 ID、角色和旧值确定目标，保留标识符、顺序、属性、`refines` 和自定义元数据。需要同步 EPUB 3 的 `dcterms:modified` 时，使用明确的 UTC 时间并记录变更。
-- **正文。** 按 spine 扫描目标章节，检查推广语出现的位置、频次和上下文。记下 ZIP 路径、稳定定位、简短前后文和命中依据。原始 XHTML 中的目标必须唯一匹配；广告和正文混排时只编辑对应的文本片段。删除独立元素前检查后续 `tail` 文本、脚注、ID、链接和复用图片，保留仍被引用的结构。
-- **序列化。** 保留原编码、XML 声明、doctype、命名空间、注释、处理指令和原有排版属性，关闭 pretty-print。检查每份 OPF 或 XHTML 的完整差异。关注 XHTML 的 `head`、样式、脚本、标题和锚点，以及 SVG、MathML 和 ruby。避免无关序列化变化；原始结构异常时改用可核实的定点编辑或报告阻碍。
-- **引用。** 审阅修改目标及引用它的 NAV、NCX、landmarks、page-list、章节和媒体叠加层。以引用所在文件的位置解析相对 URL，解码路径和片段后核实本地资源及目标 ID。远程资源保留 URL 并结合上下文审阅。
+The inventory reports the source SHA-256 and lists each OPF package, its manifest, reading order, and NCX identifier. Read navigation targets from the manifest's EPUB 3 navigation document or the EPUB 2 NCX. Resolve relative links from the referring member. Check the decoded paths and fragment identifiers against the original archive.
 
-将替换文件保存到计划附近。键是清单里的 ZIP 成员完整路径，值是相对于计划的本地文件路径（也支持绝对路径）。`source_sha256` 使用 `inspect` 的值。只列实际要更新的条目。
+## Prepare replacements
+
+- **Metadata.** Use the OPF and Dublin Core namespaces to identify existing fields. When multiple elements represent the same field, use the current value, ID, role, or refinement to select the intended element. Preserve identifiers, attributes, order, and custom metadata. When updating the EPUB 3 `dcterms:modified` value, use a UTC timestamp and record the change.
+- **XHTML.** Follow the spine to locate the requested passage. Review the context and verify that each proposed edit has a unique match. If promotional text shares a paragraph with regular content, edit only the identified text. Before removing an element, check its ID, incoming links, footnote references, reused resources, and trailing `tail` text.
+- **Diff review.** Preserve the XML declaration, encoding, doctype, comments, processing instructions, and meaningful whitespace. Review all changes to the edited member. Pay particular attention to headings, anchors, styles, SVG, MathML, ruby, and links from navigation, other chapters, or media overlays. Text and layout changes require review even when EPUBCheck succeeds.
+
+Create `plan.json` using the `source_sha256` from the inventory. Map each changed ZIP member to its replacement file. Use a path relative to the plan or an absolute path.
 
 ```json
 {
-  "source_sha256": "<从 inventory.json 复制>",
+  "source_sha256": "<SHA-256 from inventory.json>",
   "replacements": {
     "OPS/package.opf": "replacements/package.opf",
     "OPS/text/chapter.xhtml": "replacements/chapter.xhtml"
@@ -25,17 +28,15 @@ python3 scripts/epub_patch.py inspect book.epub > inventory.json
 }
 ```
 
-## 应用与校验
+## Apply and validate
 
 ```bash
 python3 scripts/epub_patch.py apply book.epub edited.epub \
   --plan plan.json --report-dir reports
 ```
 
-脚本只接受单一 OPF EPUB 2/3 的既有常用元数据字段文本和非 NAV 的 XHTML 正文补丁。它检查 ZIP 路径、重复项、压缩方式、首个 `mimetype` 条目和有界解压，并在源文件存在签名、权利管理或加密描述时拒绝写入。字体混淆也可使用 `encryption.xml`，此时先确认保护类型与处理范围。
+Use a new output filename and report directory. The command supports a single OPF package and checks the edit scope before rebuilding. For XHTML, it checks the document structure outside the body contents and verifies that existing anchor values remain present. It preserves ZIP member names, order, and compression methods, and compares the SHA-256 of every member's uncompressed contents. It stops on signature, rights, or encryption descriptors. Font obfuscation can also produce an encryption descriptor, so record the descriptor without inferring DRM.
 
-脚本核对 OPF 非目标结构、XHTML 的 `head` 和根节点、`body` 属性及锚点，按原 ZIP 顺序写入候选文件，读取每个成员进行 SHA-256 比对。目标路径必须全新，候选文件通过检查后才发布。`changes.json` 记录源、输出及改动成员的哈希，前后 EPUBCheck JSON 和日志记录规范诊断。文字语义、段落定位、注释保留和具体排版仍需审阅。
+By default, errors in the source EPUB block application. Use `--allow-existing-errors` only after the user accepts the documented baseline. The command requests all EPUBCheck diagnostic locations and uses the same validator version for both runs. It compares fatal errors, errors, and warnings by diagnostic ID, message, member path, and context, allowing line and column shifts. New occurrences block output. Review the full reports when a diagnostic in an edited document could have moved or changed meaning. If EPUBCheck is unavailable, report the pending validation and retain the prepared replacements.
 
-默认要求基线无 EPUBCheck 错误。用户明确接受已知基线后，可加 `--allow-existing-errors`。同一版本的前后结果按严重度、诊断 ID、消息、成员路径和上下文比较计数，忽略行列位移；新增错误、严重错误或警告会阻止发布。需要查清诊断时，查看原始 JSON 中的行列和关联位置。若 EPUBCheck 不可用，先完成检查、候选识别和补丁准备，标明校验尚未完成。
-
-交付时给出副本、改动摘要、验证报告以及残留的旧问题。具备阅读器时，抽查受影响章节、目录跳转和封面。章节级重排或资源增删要另行验证对应 manifest、spine、导航、落点和所有受影响的引用。
+Deliver the resulting EPUB and `changes.json`, along with the EPUBCheck reports where relevant. For layout-sensitive edits, spot-check the changed chapter and its navigation links in a reader and report the result.

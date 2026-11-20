@@ -68,15 +68,15 @@ def xml_member(archive, name):
     return archive.read(name)
 
 
-def check_zip(archive, path):
+def check_zip(archive, stream):
     infos = archive.infolist()
     require(0 < len(infos) <= 50_000, "ZIP entry count outside supported limits")
     require(infos[0].filename == "mimetype", "mimetype must be the first ZIP entry")
     mime = infos[0]
     require(mime.header_offset == 0 and mime.compress_type == ZIP_STORED
             and not mime.extra and mime.file_size == len(MEDIA_TYPE), "Invalid mimetype ZIP entry")
-    with path.open("rb") as stream:
-        header = stream.read(30)
+    stream.seek(0)
+    header = stream.read(30)
     require(len(header) == 30 and header[:4] == b"PK\x03\x04", "Invalid mimetype local ZIP header")
     flags, method = struct.unpack_from("<HH", header, 6)
     extra_size = struct.unpack_from("<H", header, 28)[0]
@@ -110,8 +110,8 @@ def local_href(package, href):
     return member
 
 
-def inventory(archive, path):
-    names = check_zip(archive, path)
+def inventory(archive, stream):
+    names = check_zip(archive, stream)
     container = parse_xml(xml_member(archive, CONTAINER))
     namespace = "urn:oasis:names:tc:opendocument:xmlns:container"
     rootfiles = container.xpath(
@@ -144,8 +144,17 @@ def inventory(archive, path):
     return {"entry_count": len(names), "protection": sorted(PROTECTION & names), "packages": packages}
 
 
-def canonical(node):
-    return etree.tostring(node, method="c14n", with_comments=True)
+def compare_xml(old, new, member, scope_error):
+    require(
+        etree.tostring(old, method="c14n", with_comments=True)
+        == etree.tostring(new, method="c14n", with_comments=True),
+        f"{scope_error}: {member}",
+    )
+    # Canonical XML omits the document type declaration and its internal subset.
+    if old.docinfo.doctype:
+        for tree in (old, new):
+            tree.getroot().clear()
+        require(etree.tostring(old) == etree.tostring(new), f"Document type declaration changed: {member}")
 
 
 def check_edit(member, before, after, is_package):
@@ -161,7 +170,7 @@ def check_edit(member, before, after, is_package):
                     node.text = None
             for node in tree.xpath(f"/*/opf:metadata/opf:{modified}", namespaces={"opf": OPF}):
                 node.text = None
-        require(canonical(old) == canonical(new), f"OPF changes exceed metadata text edits: {member}")
+        compare_xml(old, new, member, "OPF changes exceed metadata text edits")
         return
 
     old_root, new_root = old.getroot(), new.getroot()
@@ -177,11 +186,17 @@ def check_edit(member, before, after, is_package):
         body.text = None
         for child in list(body):
             body.remove(child)
-    require(canonical(old) == canonical(new), f"XHTML changes outside body content: {member}")
+    compare_xml(old, new, member, "XHTML changes outside body content")
+
+
+def unique_fields(pairs):
+    fields = dict(pairs)
+    require(len(fields) == len(pairs), "Duplicate key in replacement plan")
+    return fields
 
 
 def read_replacements(archive, book, plan_path, digest):
-    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    plan = json.loads(plan_path.read_text(encoding="utf-8"), object_pairs_hook=unique_fields)
     require(isinstance(plan, dict) and plan.get("source_sha256") == digest, "Plan source SHA-256 differs")
     proposed = plan.get("replacements")
     require(isinstance(proposed, dict) and proposed, "Plan must contain replacements")
@@ -191,7 +206,7 @@ def read_replacements(archive, book, plan_path, digest):
     require(package["version"] in {"2.0", "3.0"}, "Editing supports EPUB 2.0 and 3.0 packages")
     documents = {
         item["member"] for item in package["manifest"]
-        if item["media_type"] == "application/xhtml+xml" and "nav" not in item["properties"]
+        if item["member"] is not None and item["media_type"] == "application/xhtml+xml"
     }
     documents -= {item["member"] for item in package["manifest"] if "nav" in item["properties"]}
     allowed = documents | {package["member"]}
@@ -226,8 +241,8 @@ def repack(archive, candidate, replacements):
                 else:
                     with archive.open(info) as source:
                         shutil.copyfileobj(source, target, length=CHUNK_SIZE)
-    with ZipFile(candidate) as output:
-        check_zip(output, candidate)
+    with candidate.open("rb") as stream, ZipFile(stream) as output:
+        check_zip(output, stream)
         require(
             [(i.filename, i.compress_type) for i in output.infolist()]
             == [(i.filename, i.compress_type) for i in archive.infolist()],
@@ -244,23 +259,31 @@ def repack(archive, candidate, replacements):
 
 def run_epubcheck(command, book, report):
     run = subprocess.run(
-        [command, "--json", str(report), str(book)], capture_output=True, timeout=180,
+        [command, "--maxOfEachMessage", "unlimited", "--json", str(report), str(book)],
+        capture_output=True, timeout=180,
     )
     report.with_suffix(".log").write_bytes(run.stdout + run.stderr)
     require(run.returncode in {0, 1} and report.is_file(), f"EPUBCheck did not complete, see {report.with_suffix('.log')}")
     data = json.loads(report.read_text(encoding="utf-8"))
     checker = data["checker"]
+    diagnostic_keys = {"FATAL": "nFatal", "ERROR": "nError", "WARNING": "nWarning"}
+    groups = Counter()
     counts = Counter()
     for entry in data["messages"]:
         severity = entry["severity"].upper()
-        if severity in {"FATAL", "ERROR", "WARNING"}:
+        if severity in diagnostic_keys:
+            groups[severity] += 1
+            require(entry.get("additionalLocations", 0) == 0, f"Truncated EPUBCheck report: {report}")
             locations = entry.get("locations") or []
             counts.update(
                 (severity, entry["ID"], entry["message"], loc.get("path"), loc.get("context"))
                 for loc in locations or [{}]
             )
-    failed = bool(checker["nFatal"] or checker["nError"])
-    require(failed == any(key[0] in {"FATAL", "ERROR"} for key in counts), "Incomplete EPUBCheck JSON report")
+    require(
+        all(groups[severity] == checker[key] for severity, key in diagnostic_keys.items()),
+        f"Incomplete EPUBCheck report: {report}",
+    )
+    failed = bool(groups["FATAL"] or groups["ERROR"])
     require(run.returncode == int(failed), "Unexpected EPUBCheck exit status, see diagnostic log")
     return checker["checkerVersion"], failed, counts
 
@@ -282,8 +305,8 @@ def apply(args):
         candidate.parent.mkdir()
         shutil.copyfile(args.source, source)
         digest = sha_file(source)
-        with ZipFile(source) as archive:
-            book = inventory(archive, source)
+        with source.open("rb") as stream, ZipFile(stream) as archive:
+            book = inventory(archive, stream)
             replacements = read_replacements(archive, book, args.plan, digest)
             reports.mkdir(parents=True)
             version, failed, baseline = run_epubcheck(args.epubcheck, source, reports / "epubcheck-before.json")
@@ -326,9 +349,18 @@ def main():
     args = parser.parse_args()
     try:
         if args.command == "inspect":
-            with ZipFile(args.source) as archive:
-                data = inventory(archive, args.source)
-            data["source_sha256"] = sha_file(args.source)
+            with args.source.open("rb") as stream:
+                before = os.fstat(stream.fileno())
+                with ZipFile(stream) as archive:
+                    data = inventory(archive, stream)
+                stream.seek(0)
+                data["source_sha256"] = file_digest(stream, "sha256").hexdigest()
+                after = os.fstat(stream.fileno())
+                require(
+                    (before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+                    == (after.st_size, after.st_mtime_ns, after.st_ctime_ns),
+                    "Source changed during inspection",
+                )
             print(json.dumps(data, ensure_ascii=False, indent=2))
         else:
             apply(args)

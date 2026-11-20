@@ -1,10 +1,10 @@
 # EpubLib
 
-用于检查和精确编辑现有 EPUB 2/3 的 Agent Skill。适合修订元数据、纠正章节文字和清理明确的推广内容。局部补丁保留原始导航、阅读顺序和未修改资源。
+EpubLib is an Agent Skill for inspecting and applying targeted edits to existing EPUB 2 and EPUB 3 publications. It supports package and navigation inspection, metadata corrections, and XHTML copyediting. The editing workflow preserves the source publication and verifies the contents of every unchanged ZIP member.
 
-## 安装
+## Installation
 
-将 [`epublib/`](epublib/) 放入客户端的技能目录。例如，Codex 默认使用 `~/.agents/skills/`。
+Install the [`epublib/`](epublib/) directory in your client's skills directory. For Codex, use `~/.agents/skills/`.
 
 ```bash
 git clone https://github.com/LINYICo/EpubLib.git
@@ -13,14 +13,14 @@ cp -R EpubLib/epublib ~/.agents/skills/
 cp EpubLib/LICENSE ~/.agents/skills/epublib/
 ```
 
-在已有环境使用 Python 3.11+ 和 `lxml`。应用补丁还需要可运行的 EPUBCheck。可选分析工具与官方文档见[工具参考](epublib/references/tools.md)。
+The bundled script requires Python 3.11 or later and `lxml`. Applying edits also requires EPUBCheck with support for unlimited JSON diagnostics. The workflow has been tested with EPUBCheck 5.4.0. See the [tool reference](epublib/references/tools.md) for optional libraries and official documentation.
 
-## 使用
+## Usage
 
-> 用 $epublib 把这本书的书名改为《修订版》，只处理明确的推广段落，并输出校验过的副本。
+> Use $epublib to update the title to *Revised Edition* and produce a validated copy.
 
-`inspect` 查看原书结构。准备好逐文件替换后，`apply` 校验并生成副本。命令、补丁格式和基线诊断的处理方式见[编辑流程](epublib/references/editing.md)。
+The `inspect` command inventories the source publication. The `apply` command uses an explicit replacement plan, compares EPUBCheck diagnostics, and writes a new EPUB with a change report. See the [editing guide](epublib/references/editing.md) for the plan format and validation rules.
 
-## 许可证
+## License
 
 [MIT](LICENSE)
