@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inspect an EPUB or apply a reviewed OPF/XHTML replacement plan."""
+"""Inspect, verify, or apply a reviewed replacement plan to an EPUB."""
 
 import argparse
 from collections import Counter
@@ -16,6 +16,7 @@ import struct
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
+from typing import NamedTuple
 from urllib.parse import unquote, urlsplit
 from zipfile import BadZipFile, ZIP_DEFLATED, ZIP_STORED, ZipFile
 
@@ -35,6 +36,12 @@ LIMIT_MEMBER = 256 * 1024**2
 LIMIT_TOTAL = 2 * 1024**3
 LIMIT_XML = 16 * 1024**2
 CHUNK_SIZE = 1024**2
+
+
+class Diagnostics(NamedTuple):
+    version: str
+    has_errors: bool
+    occurrences: Counter
 
 
 def require(condition, message):
@@ -232,15 +239,21 @@ def archive_hashes(archive):
 
 
 def repack(archive, candidate, replacements):
+    before = {}
     with ZipFile(candidate, "x") as output:
         output.comment = archive.comment
         for info in archive.infolist():
-            with output.open(copy(info), "w") as target:
-                if info.filename in replacements:
-                    target.write(replacements[info.filename])
+            name = info.filename
+            with archive.open(info) as source, output.open(copy(info), "w") as target:
+                if name in replacements:
+                    before[name] = file_digest(source, "sha256").hexdigest()
+                    target.write(replacements[name])
                 else:
-                    with archive.open(info) as source:
-                        shutil.copyfileobj(source, target, length=CHUNK_SIZE)
+                    digest = sha256()
+                    while chunk := source.read(CHUNK_SIZE):
+                        digest.update(chunk)
+                        target.write(chunk)
+                    before[name] = digest.hexdigest()
     with candidate.open("rb") as stream, ZipFile(stream) as output:
         check_zip(output, stream)
         require(
@@ -249,7 +262,6 @@ def repack(archive, candidate, replacements):
             "ZIP entry order, names or compression methods changed",
         )
         after = archive_hashes(output)
-    before = archive_hashes(archive)
     require({name for name in before if before[name] != after[name]} == replacements.keys(),
             "Archive changes differ from approved plan")
     require(all(after[name] == sha256(data).hexdigest() for name, data in replacements.items()),
@@ -258,6 +270,10 @@ def repack(archive, candidate, replacements):
 
 
 def run_epubcheck(command, book, report):
+    book = book.resolve()
+    cwd = Path.cwd()
+    relative_book = book.relative_to(cwd).as_posix() if book.is_relative_to(cwd) else None
+    container_paths = {str(book), unquote(book.as_uri())}
     run = subprocess.run(
         [command, "--maxOfEachMessage", "unlimited", "--json", str(report), str(book)],
         capture_output=True, timeout=180,
@@ -275,21 +291,75 @@ def run_epubcheck(command, book, report):
             groups[severity] += 1
             require(entry.get("additionalLocations", 0) == 0, f"Truncated EPUBCheck report: {report}")
             locations = entry.get("locations") or []
-            counts.update(
-                (severity, entry["ID"], entry["message"], loc.get("path"), loc.get("context"))
-                for loc in locations or [{}]
-            )
+            for loc in locations or [{}]:
+                path = loc.get("path")
+                if path is not None:
+                    decoded = unquote(path)
+                    if decoded in container_paths or (
+                        decoded.startswith("./") and posixpath.normpath(decoded) == relative_book
+                    ):
+                        path = "<container>"
+                counts[(severity, entry["ID"], entry["message"], path, loc.get("context"))] += 1
     require(
         all(groups[severity] == checker[key] for severity, key in diagnostic_keys.items()),
         f"Incomplete EPUBCheck report: {report}",
     )
     failed = bool(groups["FATAL"] or groups["ERROR"])
     require(run.returncode == int(failed), "Unexpected EPUBCheck exit status, see diagnostic log")
-    return checker["checkerVersion"], failed, counts
+    return Diagnostics(checker["checkerVersion"], failed, counts)
 
 
 def write_json(path, data):
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def validate_candidate(before, after, reports):
+    require(before.version == after.version, "EPUBCheck version changed between runs")
+    require(not (after.occurrences - before.occurrences), f"New EPUBCheck errors or warnings, see {reports}")
+
+
+def file_state(info):
+    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+
+
+def verify(args):
+    require(args.source.is_file() and args.candidate.is_file(), "Source and candidate must be regular files")
+    require(not args.source.samefile(args.candidate), "Source and candidate must be different files")
+    reports = args.report_dir.absolute()
+    reports.mkdir(parents=True)
+    inspections = []
+    for label, path in (("before", args.source), ("after", args.candidate)):
+        with path.open("rb") as stream:
+            state = file_state(os.fstat(stream.fileno()))
+            with ZipFile(stream) as archive:
+                check_zip(archive, stream)
+                members = archive_hashes(archive)
+            stream.seek(0)
+            digest = file_digest(stream, "sha256").hexdigest()
+            inspections.append((state, digest, members))
+    (source_state, source_hash, source_members), (candidate_state, candidate_hash, candidate_members) = inspections
+    added = candidate_members.keys() - source_members.keys()
+    removed = source_members.keys() - candidate_members.keys()
+    shared = source_members.keys() & candidate_members.keys()
+    changed = sorted(name for name in shared if source_members[name] != candidate_members[name])
+    before = run_epubcheck(args.epubcheck, args.source, reports / "epubcheck-before.json")
+    after = run_epubcheck(args.epubcheck, args.candidate, reports / "epubcheck-after.json")
+    require(file_state(args.source.stat()) == source_state and file_state(args.candidate.stat()) == candidate_state,
+            "Source or candidate changed during verification")
+    write_json(reports / "comparison.json", {
+        "source_sha256": source_hash,
+        "candidate_sha256": candidate_hash,
+        "added": sorted(added),
+        "removed": sorted(removed),
+        "changed": changed,
+        "unchanged_entries": len(shared) - len(changed),
+        "epubcheck_version": after.version,
+        "baseline_has_errors": before.has_errors,
+        "candidate_has_errors": after.has_errors,
+    })
+    validate_candidate(before, after, reports)
+    require(not after.has_errors or args.allow_existing_errors, f"Existing EPUBCheck errors remain, see {reports}")
+    print(reports / "comparison.json")
 
 
 def apply(args):
@@ -309,23 +379,20 @@ def apply(args):
             book = inventory(archive, stream)
             replacements = read_replacements(archive, book, args.plan, digest)
             reports.mkdir(parents=True)
-            version, failed, baseline = run_epubcheck(args.epubcheck, source, reports / "epubcheck-before.json")
-            require(not failed or args.allow_existing_errors, f"Existing EPUBCheck errors, see {reports}")
+            baseline = run_epubcheck(args.epubcheck, source, reports / "epubcheck-before.json")
+            require(not baseline.has_errors or args.allow_existing_errors, f"Existing EPUBCheck errors, see {reports}")
             before, after = repack(archive, candidate, replacements)
-        new_version, candidate_failed, diagnostics = run_epubcheck(
-            args.epubcheck, candidate, reports / "epubcheck-after.json",
-        )
-        require(version == new_version, "EPUBCheck version changed between runs")
-        require(not (diagnostics - baseline), f"New EPUBCheck errors or warnings, see {reports}")
+        verified = run_epubcheck(args.epubcheck, candidate, reports / "epubcheck-after.json")
+        validate_candidate(baseline, verified, reports)
         require(sha_file(args.source) == digest, "Source changed during editing")
         write_json(reports / "changes.json", {
             "source_sha256": digest,
             "output_sha256": sha_file(candidate),
             "changes": {name: {"before": before[name], "after": after[name]} for name in sorted(replacements)},
             "unchanged_entries": len(before) - len(replacements),
-            "epubcheck_version": version,
-            "baseline_has_errors": failed,
-            "output_has_errors": candidate_failed,
+            "epubcheck_version": verified.version,
+            "baseline_has_errors": baseline.has_errors,
+            "output_has_errors": verified.has_errors,
         })
         candidate.chmod(0o600)
         # The staging file and destination share a filesystem. Linking is atomic
@@ -343,9 +410,13 @@ def main():
     patch.add_argument("source", type=Path)
     patch.add_argument("output", type=Path)
     patch.add_argument("--plan", required=True, type=Path)
-    patch.add_argument("--report-dir", required=True, type=Path)
-    patch.add_argument("--epubcheck", default="epubcheck", help="Path to the EPUBCheck executable")
-    patch.add_argument("--allow-existing-errors", action="store_true", help="Allow an explicitly accepted baseline")
+    compare = commands.add_parser("verify", help="Compare and validate an independently edited EPUB")
+    compare.add_argument("source", type=Path)
+    compare.add_argument("candidate", type=Path)
+    for command in (patch, compare):
+        command.add_argument("--report-dir", required=True, type=Path)
+        command.add_argument("--epubcheck", default="epubcheck", help="Path to the EPUBCheck executable")
+        command.add_argument("--allow-existing-errors", action="store_true", help="Allow an explicitly accepted baseline")
     args = parser.parse_args()
     try:
         if args.command == "inspect":
@@ -357,13 +428,14 @@ def main():
                 data["source_sha256"] = file_digest(stream, "sha256").hexdigest()
                 after = os.fstat(stream.fileno())
                 require(
-                    (before.st_size, before.st_mtime_ns, before.st_ctime_ns)
-                    == (after.st_size, after.st_mtime_ns, after.st_ctime_ns),
+                    file_state(before) == file_state(after),
                     "Source changed during inspection",
                 )
             print(json.dumps(data, ensure_ascii=False, indent=2))
-        else:
+        elif args.command == "apply":
             apply(args)
+        else:
+            verify(args)
     except (ValueError, KeyError, OSError, BadZipFile, etree.LxmlError, subprocess.SubprocessError) as error:
         parser.exit(1, f"epublib: {error}\n")
 

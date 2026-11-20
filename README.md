@@ -19,7 +19,7 @@ The bundled script requires Python 3.11 or later and `lxml`. Applying edits also
 
 > Use $epublib to update the title to *Revised Edition* and produce a validated copy.
 
-The `inspect` command inventories the source publication. The `apply` command uses an explicit replacement plan, compares EPUBCheck diagnostics, and writes a new EPUB with a change report. See the [editing guide](epublib/references/editing.md) for the plan format and validation rules.
+The `inspect` command inventories the source publication. The `apply` command uses an explicit replacement plan, compares EPUBCheck diagnostics, and writes a new EPUB with a change report. Use `verify` to audit structural repairs prepared separately. See the [editing guide](epublib/references/editing.md) for the plan format and validation rules.
 
 ## License
 

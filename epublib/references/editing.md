@@ -40,3 +40,17 @@ Use a new output filename and report directory. The command supports a single OP
 By default, errors in the source EPUB block application. Use `--allow-existing-errors` only after the user accepts the documented baseline. The command requests all EPUBCheck diagnostic locations and uses the same validator version for both runs. It compares fatal errors, errors, and warnings by diagnostic ID, message, member path, and context, allowing line and column shifts. New occurrences block output. Review the full reports when a diagnostic in an edited document could have moved or changed meaning. If EPUBCheck is unavailable, report the pending validation and retain the prepared replacements.
 
 Deliver the resulting EPUB and `changes.json`, along with the EPUBCheck reports where relevant. For layout-sensitive edits, spot-check the changed chapter and its navigation links in a reader and report the result.
+
+## Verify a structural repair
+
+For an authorized repair outside the replacement plan's scope, rebuild a separate candidate from the original ZIP members. This covers adding missing package metadata, editing CSS, renaming chapter files, or removing a confirmed promotional page and its unused assets. Keep the EPUB version and original reading order unless the task requires a change. Run one baseline and candidate validation pair with `verify`.
+
+```bash
+python3 scripts/epub_patch.py verify book.epub repaired.epub --report-dir reports
+```
+
+- **Metadata and navigation.** Cross-check edition details with the publisher and the book's imprint. Preserve the package's primary identifier unless there is evidence that it is wrong. Keep it synchronized with the NCX UID in EPUB 2. Update package, navigation, and content references together when renaming a member. Preserve fragment targets and verify reading order.
+- **Exporter markup.** Inspect proprietary attributes before cleanup. If an empty marker contains footnote text, preserve that text in a linked note with a return link. Compare the original and edited chapter text after excluding generated markers and note blocks. Remove remote font declarations if local reader fonts can serve the same role.
+- **Advertising and layout.** Remove promotional assets only after checking all remaining references. Preserve edition matter such as the cover, copyright page, and endorsements about the book itself unless they are in scope. Check typography on narrow and wide viewports, including headings, inline formulas, and note links.
+
+`verify` checks ZIP member integrity, compares EPUBCheck diagnostics, and reports added, removed, and byte-changed members in `comparison.json`. A rename appears as one removal and one addition. Review the comparison against the approved scope and confirm link targets independently. The command accepts a clean candidate from a source with existing errors. An unresolved baseline requires `--allow-existing-errors` and explicit acceptance. New errors or warnings always fail verification.
