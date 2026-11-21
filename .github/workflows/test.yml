@@ -1,0 +1,27 @@
+name: Tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: python -m pip install lxml
+      - name: Install EPUBCheck 5.4.0
+        run: |
+          cd "$RUNNER_TEMP"
+          curl --fail --location --retry 3 -o epubcheck.zip https://github.com/w3c/epubcheck/releases/download/v5.4.0/epubcheck-5.4.0.zip
+          echo "33350c61038e71dfb3d45a76aed04bf5481e6d5500cb780f6e98db8bbd15a28c  epubcheck.zip" | sha256sum --check
+          unzip -q epubcheck.zip
+          printf '#!/bin/sh\nexec java -jar "%s/epubcheck-5.4.0/epubcheck.jar" "$@"\n' "$RUNNER_TEMP" > epubcheck
+          chmod +x epubcheck
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - run: epubcheck --version && python -m unittest discover -s tests -v

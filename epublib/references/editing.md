@@ -24,9 +24,18 @@ Create `plan.json` using the `source_sha256` from the inventory. Map each change
   "replacements": {
     "OPS/package.opf": "replacements/package.opf",
     "OPS/text/chapter.xhtml": "replacements/chapter.xhtml"
+  },
+  "text_edits": {
+    "OPS/text/chapter.xhtml": [
+      {"old": "teh harbour", "new": "the harbour", "count": 1}
+    ]
   }
 }
 ```
+
+For copyedits, include every changed XHTML member in `text_edits`. Each substitution applies in order to individual body text nodes, including text following inline elements. The count must match exactly. The CLI compares the resulting document with the proposed replacement, catching unrelated deletions and markup changes. Use a longer phrase when the same word occurs in several places. Existing plans without this field retain the broader body-edit checks described below.
+
+For EPUB 3, include the package's unrefined `dcterms:modified` in the reviewed replacements and set it to the revision time in UTC. The change report flags EPUB 3 publications for timestamp review. [EPUB 3 last modified date](https://www.w3.org/TR/epub-33/#last-modified-date)
 
 ## Apply and validate
 
@@ -46,7 +55,19 @@ Deliver the resulting EPUB and `changes.json`, along with the EPUBCheck reports 
 For an authorized repair outside the replacement plan's scope, rebuild a separate candidate from the original ZIP members. This covers adding missing package metadata, editing CSS, renaming chapter files, or removing a confirmed promotional page and its unused assets. Keep the EPUB version and original reading order unless the task requires a change. Run one baseline and candidate validation pair with `verify`.
 
 ```bash
-python3 scripts/epub_patch.py verify book.epub repaired.epub --report-dir reports
+python3 scripts/epub_patch.py verify book.epub repaired.epub \
+  --expected-changes scope.json --report-dir reports
+```
+
+Write `scope.json` before verification. List exact ZIP member names in each category, using empty arrays where appropriate. A missing expected change also fails verification. Omit the flag for an inventory-only comparison with EPUBCheck.
+
+```json
+{
+  "source_sha256": "<SHA-256 from inventory.json>",
+  "added": [],
+  "removed": [],
+  "changed": ["OPS/package.opf", "OPS/text/chapter.xhtml"]
+}
 ```
 
 - **Metadata and navigation.** Cross-check edition details with the publisher and the book's imprint. Preserve the package's primary identifier unless there is evidence that it is wrong. Keep it synchronized with the NCX UID in EPUB 2. Update package, navigation, and content references together when renaming a member. Preserve fragment targets and verify reading order.
