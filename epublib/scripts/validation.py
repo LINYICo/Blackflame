@@ -1,6 +1,7 @@
 """Run EPUBCheck and compare complete diagnostic occurrences."""
 from collections import Counter
 import json
+import os
 from pathlib import Path
 import posixpath
 import subprocess
@@ -24,8 +25,11 @@ def run_epubcheck(command, book, report):
     container_paths = {str(book), unquote(book.as_uri())}
     with TemporaryDirectory(dir=report.parent) as directory:
         fresh = Path(directory) / "result.json"
+        executable = [command]
+        if command == "epubcheck" and os.environ.get("EPUBLIB_CHECKER_JAR"):
+            executable = [os.environ["EPUBLIB_JAVA"], "-jar", os.environ["EPUBLIB_CHECKER_JAR"]]
         run = subprocess.run(
-            [command, "--maxOfEachMessage", "unlimited", "--json", str(fresh), str(book)],
+            [*executable, "--maxOfEachMessage", "unlimited", "--json", str(fresh), str(book)],
             capture_output=True, timeout=180,
         )
         log = report.with_suffix(".log")

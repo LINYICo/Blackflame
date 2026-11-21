@@ -5,7 +5,7 @@ Run commands from the skill directory. Store the inventory, replacement files, p
 ## Inspect the source
 
 ```bash
-python3 scripts/epub_patch.py inspect book.epub > inventory.json
+python3 scripts/skill.py run inspect book.epub > inventory.json
 ```
 
 The inventory reports the source SHA-256, package metadata, primary identifier, cover and navigation members, and resolved spine entries. Read navigation targets from the manifest's EPUB 3 navigation document or the EPUB 2 NCX. Resolve relative links from the referring member. Check the decoded paths and fragment identifiers against the original archive.
@@ -40,7 +40,7 @@ For EPUB 3, include the package's unrefined `dcterms:modified` in the reviewed r
 ## Apply and validate
 
 ```bash
-python3 scripts/epub_patch.py apply book.epub edited.epub \
+python3 scripts/skill.py run apply book.epub edited.epub \
   --plan plan.json --report-dir reports
 ```
 
@@ -55,7 +55,7 @@ Deliver the resulting EPUB and `changes.json`, along with the EPUBCheck reports 
 For an authorized repair outside the replacement plan's scope, rebuild a separate candidate from the original ZIP members. This covers adding missing package metadata, editing CSS, renaming chapter files, or removing a confirmed promotional page and its unused assets. Keep the EPUB version and original reading order unless the task requires a change. Run one baseline and candidate validation pair with `verify`.
 
 ```bash
-python3 scripts/epub_patch.py verify book.epub repaired.epub \
+python3 scripts/skill.py run verify book.epub repaired.epub \
   --expected-changes scope.json --report-dir reports
 ```
 

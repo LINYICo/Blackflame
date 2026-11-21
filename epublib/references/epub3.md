@@ -16,7 +16,7 @@ Confirm the title, edition, and source of the image. Use a genuine high-resoluti
 ## Verify the candidate
 
 ```bash
-python3 scripts/epub_patch.py verify original.epub candidate.epub \
+python3 scripts/skill.py run verify original.epub candidate.epub \
   --preserve-spine --preserve-text --report-dir reports
 ```
 

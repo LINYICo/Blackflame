@@ -21,3 +21,9 @@ Run the same executable on the source and candidate. The CLI passes `--maxOfEach
 ## Editing dependencies
 
 The bundled writer reads original ZIP members, uses strict XML parsing with external DTD loading and entity expansion disabled, and compares SHA-256 digests of uncompressed member bytes. EPUBLib, EbookLib, and Beautiful Soup are optional inspection tools. [lxml parser options](https://lxml.de/parsing.html) · [Python zipfile](https://docs.python.org/3/library/zipfile.html)
+
+## Managed updates
+
+The skill launcher selects the latest compatible Python packages from pip's configured index. The managed set includes lxml, EbookLib and Beautiful Soup. EPUBLib requires Python 3.13 or later. EPUBCheck comes from the latest official GitHub release and its archive is verified against the published SHA-256. When a Java runtime is missing and automatic installation is enabled, the launcher installs a private runtime via jdk4py. Use `python3 scripts/skill.py python` for Python tools in this environment. [EPUBLib package](https://pypi.org/project/epublib/) · [EPUBCheck releases](https://github.com/w3c/epubcheck/releases)
+
+A successful refresh records `last_updated_at`, `next_update_at`, and a one-month interval. The next check uses the same UTC day and time in the following month, or its final day when the day does not exist. If a refresh fails, the launcher records the error and retains the working environment. It retries on the next invocation. The standalone `epub_patch.py` remains available for callers that manage their own dependencies.
