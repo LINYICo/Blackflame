@@ -17,9 +17,19 @@ Confirm the title, edition, and source of the image. Use a genuine high-resoluti
 
 ```bash
 python3 scripts/epub_patch.py verify original.epub candidate.epub \
-  --preserve-spine --report-dir reports
+  --preserve-spine --preserve-text --report-dir reports
 ```
 
 The spine check compares ordered, resolved ZIP member paths, linear flags, and page progression. Use it when those must stay the same. If an approved repair renames spine members, verify without the flag and compare the original and candidate orders using the planned filename mapping.
 
 Compare navigation entries, note text and targets, and body text. Spot-check cover proportions, the opening location, note pop-ups, and text reflow in the target reader when available. Report conformance and reader testing separately.
+
+## Repair an existing reader edition
+
+Keep a working EPUB 2 NCX and guide when the requested repair only needs a cover, stylesheet, or opening location. In EPUB 3, populate the landmarks list with links to the actual cover document and first chapter. When a cover uses an SVG wrapper, update its viewport and image dimensions together or use a proportional XHTML image.
+
+Inspect image-only pages at thumbnail size. A title leaf, chart, and third-party download advertisement can all have empty alternative text. Remove a confirmed advertisement from the chapter, manifest, and archive after checking incoming references.
+
+When several footnotes share an ID, match each reference to its note using the marker's alternative text or surrounding context before assigning unique IDs. Compare every reference with its intended note. A unique, valid link can still lead to the wrong note.
+
+For layout-only repairs, pass `--preserve-text` to compare body text by member path across spine XHTML documents. It collapses XML whitespace and skips EPUB 3 navigation documents. Check image alternatives, footnotes, and illustration order separately. If the user requests in-place delivery, verify a staged candidate, recheck the source digest, then atomically replace the named file on the same filesystem.

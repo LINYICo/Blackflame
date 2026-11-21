@@ -15,7 +15,7 @@ from lxml import etree
 
 from edit_plan import read_replacements, unique_fields
 from publication import (
-    LIMIT_TOTAL, archive_hashes, check_zip, inventory, repack, require,
+    LIMIT_TOTAL, archive_hashes, check_zip, inventory, reading_text_hashes, repack, require,
     sha_file, spine_signature,
 )
 from validation import run_epubcheck, validate_candidate
@@ -36,12 +36,17 @@ def verify(args):
     reports.mkdir(parents=True)
     inspections = []
     spines = []
+    reading_text = []
     for path in (args.source, args.candidate):
         with path.open("rb") as stream:
             state = file_state(os.fstat(stream.fileno()))
             with ZipFile(stream) as archive:
-                if args.preserve_spine:
-                    spines.append(spine_signature(inventory(archive, stream), archive))
+                if args.preserve_spine or args.preserve_text:
+                    book = inventory(archive, stream)
+                    if args.preserve_spine:
+                        spines.append(spine_signature(book, archive))
+                    if args.preserve_text:
+                        reading_text.append(reading_text_hashes(book, archive))
                 else:
                     check_zip(archive, stream)
                 members = archive_hashes(archive)
@@ -70,7 +75,13 @@ def verify(args):
     }
     if args.preserve_spine:
         comparison["spine_unchanged"] = spines[0] == spines[1]
+    if args.preserve_text:
+        old, new = reading_text
+        comparison["reading_text_changes"] = sorted(
+            member for member in old.keys() | new.keys() if old.get(member) != new.get(member)
+        )
     write_json(reports / "comparison.json", comparison)
+    require(not comparison.get("reading_text_changes"), f"Reading text changed, see {reports}")
     require(comparison.get("spine_unchanged", True), f"Reading order or page progression changed, see {reports}")
     if args.expected_changes:
         expected = json.loads(args.expected_changes.read_text(encoding="utf-8"), object_pairs_hook=unique_fields)
@@ -138,6 +149,7 @@ def main():
     compare.add_argument("source", type=Path)
     compare.add_argument("candidate", type=Path)
     compare.add_argument("--expected-changes", type=Path, help="Require exact added, removed and changed member lists")
+    compare.add_argument("--preserve-text", action="store_true", help="Require unchanged XHTML reading text")
     compare.add_argument("--preserve-spine", action="store_true", help="Require unchanged reading order and page progression")
     for command in (patch, compare):
         command.add_argument("--report-dir", required=True, type=Path)

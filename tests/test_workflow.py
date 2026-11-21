@@ -116,6 +116,9 @@ class WorkflowTests(unittest.TestCase):
             verify = [*cli, "verify", "source.epub", "edited.epub", "--expected-changes", "scope", "--preserve-spine", "--report-dir"]
             (root/"scope").write_text(json.dumps(scope))
             run([*verify, "verify"], cwd=root, check=True)
+            result = run([*verify, "text", "--preserve-text"], cwd=root, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(json.loads((root/"text/comparison.json").read_text())["reading_text_changes"], ["c.xhtml"])
             scope["changed"] = []
             (root/"scope").write_text(json.dumps(scope))
             result = run([*verify, "unexpected"], cwd=root, capture_output=True)

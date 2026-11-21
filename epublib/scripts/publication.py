@@ -3,6 +3,7 @@ from copy import copy
 from hashlib import file_digest, sha256
 from io import BytesIO
 import posixpath
+import re
 import stat
 import struct
 from urllib.parse import unquote, urlsplit
@@ -210,3 +211,20 @@ def spine_signature(book, archive):
         )
         result.append((package["member"], package["page_progression_direction"], sequence))
     return result
+
+
+def reading_text_hashes(book, archive):
+    """Hash body text of spine XHTML documents, excluding EPUB 3 navigation."""
+    hashes = {}
+    for package in book["packages"]:
+        documents = {item["member"] for item in package["manifest"]
+                     if item["media_type"] == "application/xhtml+xml"}
+        for entry in package["spine_items"]:
+            member = entry["member"]
+            if member not in documents or member in package["nav_members"] or member in hashes:
+                continue
+            body = parse_xml(xml_member(archive, member)).getroot().find(f"{{{XHTML}}}body")
+            require(body is not None, f"Missing XHTML body: {member}")
+            text = re.sub(r"[ \t\r\n]+", " ", "".join(body.itertext())).strip(" ")
+            hashes[member] = sha256(text.encode("utf-8")).hexdigest()
+    return hashes
