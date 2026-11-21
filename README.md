@@ -4,9 +4,9 @@ An agent skill for editing existing EPUB 2 and EPUB 3 books. Inspect the package
 
 ## Install
 
-Download [Epublib.zip](https://github.com/LINYICo/EpubLib/releases/download/v1.2.0/Epublib.zip) and extract the `epublib/` folder into your client's skills directory. For Codex, use `~/.agents/skills/`. Start with Python 3.11 or later and pip.
+Use the `epublib/` folder from this checkout for owner-aware dependency management. For the tagged 1.2.0 release, download [Epublib.zip](https://github.com/LINYICo/EpubLib/releases/download/v1.2.0/Epublib.zip) and extract the `epublib/` folder into your client's skills directory. For Codex, use `~/.agents/skills/`. Start with your preferred Python 3.11 or later.
 
-On first use, the skill asks whether it may install missing tools and whether to optimize for a particular reader. It silently refreshes dependencies on first use and on the first invocation after one calendar month. Updates run in a private environment. If installation is declined, only tools already present are selected for updates.
+First use inventories the selected interpreter and EPUBCheck. Installed tools are reused. If a needed tool is missing, the skill asks which installation method you use. Monthly maintenance follows recorded ownership and preferences. Shared Python environments remain under their existing manager.
 
 Preferences and the UTC update schedule are stored in `~/.config/epublib/settings.json`. The skill respects `XDG_CONFIG_HOME` and supports an explicit `EPUBLIB_HOME`. To change preferences, run `python3 epublib/scripts/skill.py configure --auto-install no --platform general` with your choices. [Dependency details](epublib/references/tools.md)
 

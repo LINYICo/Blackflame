@@ -10,6 +10,10 @@ python3 scripts/skill.py run inspect book.epub > inventory.json
 
 The inventory reports the source SHA-256, package metadata, primary identifier, cover and navigation members, and resolved spine entries. Read navigation targets from the manifest's EPUB 3 navigation document or the EPUB 2 NCX. Resolve relative links from the referring member. Check the decoded paths and fragment identifiers against the original archive.
 
+## Identify the edition
+
+Match the title page and copyright statement to a catalog record using author, translator or editor, publisher, publication month, and ISBN. Record a print source ISBN in `dc:source` for a transcription or a digital edition whose own ISBN is unknown. Keep the package identifier and NCX UID stable. Record only the date precision supported by the source and distinguish publication from file modification. Verify a metadata-only repair against an expected change list containing just the OPF.
+
 ## Prepare replacements
 
 - **Metadata.** Use the OPF and Dublin Core namespaces to identify existing fields. When multiple elements represent the same field, use the current value, ID, role, or refinement to select the intended element. Preserve identifiers, attributes, order, and custom metadata. When updating the EPUB 3 `dcterms:modified` value, use a UTC timestamp and record the change.

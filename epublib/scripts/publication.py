@@ -125,7 +125,7 @@ def inventory(archive, stream):
         namespaces = {"opf": OPF, "dc": DC}
         metadata = {
             field: root.xpath(f"opf:metadata/dc:{field}/text()", namespaces=namespaces)
-            for field in ("title", "creator", "contributor", "language", "publisher", "date", "identifier")
+            for field in ("title", "creator", "contributor", "language", "publisher", "date", "identifier", "source")
         }
         primary_id = root.get("unique-identifier")
         primary_identifier = root.xpath(

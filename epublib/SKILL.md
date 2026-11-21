@@ -10,12 +10,12 @@ metadata:
 
 ## First use and reader preferences
 
-At the start of each skill invocation, run `python3 scripts/skill.py status` from the skill directory. When `first_use` is true, ask these questions together in the user's language and wait for their answers.
+Run `python3 scripts/skill.py status` with the user's chosen interpreter. Check each tool's path, owner, and availability. If the user names a uv project, venv, Conda environment, or interpreter, use that environment for discovery. For a uv project, use its environment's Python directly. A package visible in another Python environment is a reason to select that interpreter and repeat discovery.
 
-- May I automatically install missing EPUB tools in a private environment?
-- Would you like the EPUB optimized for a particular reading platform? If so, which device or app do you use?
-
-Save both answers with `python3 scripts/skill.py configure --auto-install yes --platform "Apple Books"`, substituting the actual answers. Use `no` when installation is declined and `general` for a platform-neutral EPUB. Setup silently updates existing tools. Use the saved platform to guide edits and reader checks. An explicit target in the current request takes precedence. Run inspection scripts and optional Python libraries through `skill.py run` and `skill.py python` respectively.
+- Reuse installed tools without asking about installation. Ask only about missing tools needed for the task. Identify each by name and ask which existing installer the user uses. A manager on PATH alone does not establish ownership.
+- On first use, ask for the preferred reader unless the user already named one. Save preferences with `configure --platform PLATFORM --auto-install no` when no installation is needed. An explicit platform for the current task takes precedence.
+- For authorized missing dependencies, use `--auto-install yes` with the user's choice of `--python-manager pip|uv|homebrew|manual` and/or `--checker-manager homebrew|official|manual`. Limit installation to the approved libraries with repeated `--package NAME`. For brewed Python libraries, record the user’s formula with `--brew-formula PACKAGE=FORMULA`. Use `manual` for tools the user manages separately. When the user has not selected a method, continue with available tools.
+- Run editing commands through `skill.py run` and optional Python inspection through `skill.py python`. Report a maintenance failure when it affects the requested operation. See the [tool reference](references/tools.md) for monthly updates and existing environments.
 
 ## Editing workflow
 
