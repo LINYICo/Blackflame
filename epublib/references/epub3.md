@@ -11,7 +11,7 @@ Use this workflow when an edition needs EPUB 3 navigation, semantic notes, or re
 
 ## Replace an embedded cover
 
-Confirm the title, edition, and source of the image. Use a genuine high-resolution RGB JPEG or PNG and preserve its aspect ratio. Mark the image manifest item `properties="cover-image"` and update the cover page's image reference when its path changes. Apple's documented limit for images embedded in the publication is 5.6 million pixels. [Apple Books cover requirements](https://help.apple.com/itc/booksassetguide/en.lproj/itc1bda991ba.html)
+Match the cover to the edition using the ISBN, imprint, and publication date. Compare original-resolution images from publishers, catalogs, or verified copies and choose the sharpest confirmed cover. Keep searching when a high-resolution candidate shows another edition. Record the source and dimensions. A faithful lower-resolution image is preferable to a redesigned or upscaled cover. Use a genuine high-resolution RGB JPEG or PNG and preserve its aspect ratio. Mark the image manifest item `properties="cover-image"` and update the cover page's image reference when its path changes. Apple's documented limit for images embedded in the publication is 5.6 million pixels. [Apple Books cover requirements](https://help.apple.com/itc/booksassetguide/en.lproj/itc1bda991ba.html)
 
 ## Verify the candidate
 

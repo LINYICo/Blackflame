@@ -218,7 +218,7 @@ def update_dedicated(settings, tools):
             run_quietly([*command, "--upgrade", *owned])
 
 
-def refresh(settings, tools):
+def refresh(settings, tools, approved=(), install_checker_now=False):
     update_dedicated(settings, tools)
     # Only a proven Homebrew owner may update an existing formula.
     formulas = sorted({v["formula"] for v in tools.values() if v.get("formula")})
@@ -230,8 +230,7 @@ def refresh(settings, tools):
     active = settings.get("environment", {})
     missing = [p for p in PACKAGES.values() if tools[p]["owner"] == "missing"
                or (tools[p]["owner"] == "legacy" and settings.get("python_manager") in ("pip", "uv"))]
-    permitted = settings.get("packages", PACKAGES.values()) if settings.get("auto_install") else ()
-    packages = [p for p in missing if p in permitted or p in active.get("packages", [])]
+    packages = [p for p in missing if p in approved or p in active.get("packages", [])]
     if settings.get("python_manager") == "homebrew":
         mappings = settings.get("brew_formulas", {})
         for package in packages:
@@ -245,12 +244,12 @@ def refresh(settings, tools):
                     raise ValueError(f"{package} is unavailable from its requested keg in {sys.executable}")
     checker = tools["EPUBCheck"]
     method = settings.get("checker_manager")
-    if checker["owner"] == "missing" and settings.get("auto_install") and method == "homebrew":
+    if checker["owner"] == "missing" and install_checker_now and method == "homebrew":
         run_quietly(["brew", "install", "--formula", "epubcheck"])
         if not shutil.which("epubcheck"):
             raise RuntimeError("Homebrew installed EPUBCheck but it is unavailable on PATH")
     elif ((checker["owner"] in ("official", "legacy") and method == "official") or
-          (checker["owner"] == "missing" and settings.get("auto_install") and method == "official")):
+          (checker["owner"] == "missing" and install_checker_now and method == "official")):
         java = java_executable()
         if not java:
             raise RuntimeError("Official EPUBCheck requires an existing Java runtime")
@@ -274,14 +273,14 @@ def refresh(settings, tools):
         settings.pop("environment", None)
 
 
-def maintain(settings, tools):
+def maintain(settings, tools, approved=(), install_checker_now=False):
     now = datetime.now(timezone.utc)
     runtime_ok = not settings.get("environment") or environment(settings) != Path(sys.executable)
-    if runtime_ok and settings.get("next_update_at") and now < datetime.fromisoformat(settings["next_update_at"]):
+    if not (approved or install_checker_now) and runtime_ok and settings.get("next_update_at") and now < datetime.fromisoformat(settings["next_update_at"]):
         return
     old = environment(settings)
     try:
-        refresh(settings, tools)
+        refresh(settings, tools, approved, install_checker_now)
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
         settings["last_update_error"] = str(error)
         save(settings)
@@ -304,6 +303,7 @@ def main():
     setup.add_argument("--dedicated-venv", choices=("yes", "no"), help="Allow owner updates in this standalone venv")
     setup.add_argument("--python-manager", choices=("pip", "uv", "homebrew", "manual"))
     setup.add_argument("--package", action="append", choices=PACKAGES.values(), help="Limit missing Python installs")
+    setup.add_argument("--install-epubcheck", action="store_true", help="Approve this EPUBCheck installation")
     setup.add_argument("--brew-formula", action="append", default=[], metavar="PACKAGE=FORMULA")
     setup.add_argument("--checker-manager", choices=("homebrew", "official", "manual"))
     for name in ("run", "python"):
@@ -317,8 +317,6 @@ def main():
         tools = discover(settings)
         if args.command == "configure":
             updates = {"auto_install": args.auto_install == "yes", "platform": args.platform.strip() or "general"}
-            if args.package:
-                updates["packages"] = sorted(set(args.package))
             if args.brew_formula:
                 formulas = dict(settings.get("brew_formulas", {}))
                 for mapping in args.brew_formula:
@@ -334,18 +332,23 @@ def main():
             for key in ("python_manager", "checker_manager"):
                 if value := getattr(args, key):
                     updates[key] = value
-            if updates["auto_install"]:
-                if any(tools[p]["owner"] == "missing" for p in PACKAGES.values()) and not (
-                        args.python_manager or settings.get("python_manager")):
-                    parser.error("Select --python-manager pip, uv, homebrew or manual for missing libraries")
-                if tools["EPUBCheck"]["owner"] == "missing" and not (args.checker_manager or settings.get("checker_manager")):
-                    parser.error("Select --checker-manager homebrew, official or manual for missing EPUBCheck")
+            if args.auto_install == "yes":
+                if not (args.package or args.install_epubcheck):
+                    parser.error("Name each approved installation with --package or --install-epubcheck")
+                if args.package and not args.python_manager:
+                    parser.error("Choose --python-manager for this installation")
+                if args.install_epubcheck and not args.checker_manager:
+                    parser.error("Choose --checker-manager for this installation")
+            elif args.package or args.install_epubcheck:
+                parser.error("Installation requires --auto-install yes")
             if any(settings.get(k) != v for k, v in updates.items() if k != "platform"):
                 settings["next_update_at"] = None
             settings.update(updates, update_interval_months=1)
             save(settings)
         if settings:
-            maintain(settings, tools)
+            approved = args.package or () if args.command == "configure" else ()
+            install_checker_now = args.command == "configure" and args.install_epubcheck
+            maintain(settings, tools, approved, install_checker_now)
             tools = discover(settings)
         if args.command == "status":
             active = settings.get("environment", {})

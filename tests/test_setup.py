@@ -52,3 +52,12 @@ class MaintenanceTests(unittest.TestCase):
             skill.refresh({"auto_install": True, "python_manager": "uv", "checker_manager": "official"}, tools)
             command.assert_not_called()
             create.assert_not_called()
+
+    def test_saved_install_preference_does_not_authorize_new_tools(self):
+        tools = {p: {"owner": "missing"} for p in skill.PACKAGES.values()}
+        tools["EPUBCheck"] = {"owner": "missing"}
+        settings = {"auto_install": True, "python_manager": "pip", "checker_manager": "homebrew"}
+        with patch.object(skill, "run_quietly") as command, patch.object(skill, "make_environment") as create:
+            skill.refresh(settings, tools)
+            command.assert_not_called()
+            create.assert_not_called()
