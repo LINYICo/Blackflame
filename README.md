@@ -1,6 +1,6 @@
 # EpubLib
 
-An agent skill for editing existing EPUB 2 and EPUB 3 books. Inspect the package, review a targeted change, and deliver a new EPUB with a record of every changed ZIP member.
+An agent skill for editing existing EPUB books. Inspect the package, review a targeted change, and deliver a new EPUB with a record of every changed ZIP member.
 
 ## Install
 
