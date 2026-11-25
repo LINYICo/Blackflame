@@ -5,4 +5,5 @@ __pycache__/
 .venv/
 .ruff_cache/
 .shuck_cache/
+uv.lock
 Blackflame.zip

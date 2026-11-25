@@ -18,9 +18,6 @@ jobs:
           mode: check
           paths: |
             .github/workflows
-      - uses: astral-sh/setup-uv@v10.3.3
-      - name: Verify uv lockfile
-        run: uv lock --check
   test:
     strategy:
       fail-fast: false
@@ -45,8 +42,8 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      - name: Sync dependencies
-        run: uv sync --locked --all-extras --python "${{ matrix.python-version }}"
+      - name: Sync latest dependencies
+        run: uv sync --upgrade --all-extras --python "${{ matrix.python-version }}"
       - name: Install EPUBCheck 5.4.0
         shell: bash
         run: |

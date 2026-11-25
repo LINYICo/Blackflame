@@ -8,7 +8,7 @@
 
 ### Fixes
 
-- Replace unresolvable `astral-sh/setup-uv@v9` in GitHub Actions with `astral-sh/setup-uv@v10.3.3` and `astral-sh/ruff-action@v4.1.0`, add macOS Apple Silicon (`macos-15`) and Python 3.11/3.13 test matrix, verify `uv.lock`, and enforce EPUBCheck integration tests in CI.
+- Replace unresolvable `astral-sh/setup-uv@v9` in GitHub Actions with `astral-sh/setup-uv@v10.3.3` and `astral-sh/ruff-action@v4.1.0`, add macOS Apple Silicon (`macos-15`) and Python 3.11/3.13 test matrix, always pull latest upstream dependencies (`uv sync --upgrade`), and enforce EPUBCheck integration tests in CI.
 - Make `status` strictly read-only, prevent unnecessary Homebrew installation when local tools already satisfy requirements, require explicit `--allow-system-install` for system-level installs, and validate Python version/ABI before reusing virtual environments or host `site-packages`.
 - Restrict automatic monthly updates strictly to Blackflame-managed private environments with verify-before-switch rollback on failure or offline runs.
 

@@ -28,11 +28,11 @@ The editing guide defines both plan formats and explains how to read a validatio
 
 ## Development
 
-Dependencies are managed with [uv](https://docs.astral.sh/uv/) (`pyproject.toml` and `uv.lock`). Sync the environment and run the test suite:
+Dependencies are managed with [uv](https://docs.astral.sh/uv/) (`pyproject.toml`, always following latest upstream versions). Sync the environment and run the test suite:
 
 ```sh
-uv sync --all-extras
-uv run python -m unittest discover -s tests -v
+uv sync --upgrade --all-extras
+uv run --no-sync python -m unittest discover -s tests -v
 ```
 
 With EPUBCheck on the path, the suite also builds an EPUB from scratch and exercises all three CLI commands. CI runs this workflow with EPUBCheck 5.4.0.
