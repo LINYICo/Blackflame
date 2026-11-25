@@ -167,8 +167,11 @@ def protection_entries(names: set[str]) -> list[str]:
 
 
 def archive_hashes(archive: ZipFile) -> dict[str, str]:
+    """Return SHA-256 digests for all file members in the archive, ignoring empty directory entries."""
     result: dict[str, str] = {}
     for info in archive.infolist():
+        if info.is_dir():
+            continue
         with archive.open(info) as handle:
             result[info.filename] = file_digest(handle, "sha256").hexdigest()
     return result
@@ -229,11 +232,10 @@ def _hash_reading_text(body: etree._Element) -> str:
         else:
             buf.append(text)
     _flush_normal()
-    canonical = "\n".join(parts)
-    return sha256(canonical.encode("utf-8")).hexdigest()
+    return sha256("\n".join(parts).encode("utf-8")).hexdigest()
 
 
-def _spine_and_docs(archive: ZipFile, names: set[str]) -> tuple[list, dict[str, str]]:
+def _spine_and_docs(archive: ZipFile, names: set[str]) -> tuple[list, dict[str, str], list[str]]:
     container = parse_xml(_read_xml_member(archive, CONTAINER))
     rootfiles = container.xpath(
         "/c:container/c:rootfiles/c:rootfile[@media-type='application/oebps-package+xml']/@full-path",
@@ -242,6 +244,7 @@ def _spine_and_docs(archive: ZipFile, names: set[str]) -> tuple[list, dict[str, 
     _require(bool(rootfiles), "No OPF package listed in container.xml")
     spines: list = []
     text_hashes: dict[str, str] = {}
+    skipped: set[str] = set()
     for pkg in rootfiles:
         _require(pkg in names and not pkg.endswith("/"), f"Missing OPF package: {pkg}")
         root = parse_xml(_read_xml_member(archive, pkg)).getroot()
@@ -273,12 +276,15 @@ def _spine_and_docs(archive: ZipFile, names: set[str]) -> tuple[list, dict[str, 
         direction = spine.get("page-progression-direction", "default")
         spines.append((pkg, direction, seq))
         for member, _ in seq:
-            if member not in xhtml_docs or member in nav_docs or member in text_hashes:
+            if member in text_hashes:
+                continue
+            if member not in xhtml_docs or member in nav_docs:
+                skipped.add(member)
                 continue
             body = parse_xml(_read_xml_member(archive, member)).getroot().find(f"{{{XHTML}}}body")
             _require(body is not None, f"Missing XHTML body: {member}")
             text_hashes[member] = _hash_reading_text(body)
-    return spines, text_hashes
+    return spines, text_hashes, sorted(skipped)
 
 
 def replace_members(
@@ -311,6 +317,9 @@ def replace_members(
                 out_zip.comment = archive.comment
                 for info in archive.infolist():
                     name = info.filename
+                    if info.is_dir():
+                        out_zip.writestr(copy(info), b"")
+                        continue
                     with archive.open(info) as src_member, out_zip.open(copy(info), "w") as dst_member:
                         if name in replacements:
                             before[name] = file_digest(src_member, "sha256").hexdigest()
@@ -357,7 +366,7 @@ def compare_epubs(
     preserve_spine: bool = False,
     preserve_text: bool = False,
 ) -> dict:
-    """Compare source and candidate EPUBs for ZIP diffs, spine order, and structured reading text hashes."""
+    """Compare source and candidate EPUBs for file-member diffs, spine order, and spine XHTML reading-text hashes."""
     _require(source.is_file() and candidate.is_file(), "Source and candidate must be regular files")
     _require(not source.samefile(candidate), "Source and candidate must be different files")
 
@@ -366,10 +375,14 @@ def compare_epubs(
         with path.open("rb") as stream, ZipFile(stream) as archive:
             names = check_zip(archive, stream)
             members = archive_hashes(archive)
-            spines, texts = _spine_and_docs(archive, names) if (preserve_spine or preserve_text) else ([], {})
-        snapshots.append((sha256_file(path), members, spines, texts))
+            spines, texts, skipped = (
+                _spine_and_docs(archive, names) if (preserve_spine or preserve_text) else ([], {}, [])
+            )
+        snapshots.append((sha256_file(path), members, spines, texts, skipped))
 
-    (src_sha, src_mem, src_spine, src_text), (cand_sha, cand_mem, cand_spine, cand_text) = snapshots
+    (src_sha, src_mem, src_spine, src_text, src_skipped), (cand_sha, cand_mem, cand_spine, cand_text, cand_skipped) = (
+        snapshots
+    )
     added = sorted(cand_mem.keys() - src_mem.keys())
     removed = sorted(src_mem.keys() - cand_mem.keys())
     shared = src_mem.keys() & cand_mem.keys()
@@ -387,6 +400,8 @@ def compare_epubs(
         report["spine_unchanged"] = src_spine == cand_spine
         _require(report["spine_unchanged"], "Reading order or page progression changed")
     if preserve_text:
+        report["inspected_reading_docs"] = sorted(src_text.keys() | cand_text.keys())
+        report["skipped_reading_docs"] = sorted(set(src_skipped) | set(cand_skipped))
         _require(
             bool(src_text) and bool(cand_text),
             "No inspectable spine XHTML reading documents found for text fidelity check",
@@ -449,11 +464,14 @@ def image_dimensions(data: bytes) -> tuple[int, int] | None:
 
 
 def run_epubcheck(book: Path, report: Path, executable: str = "epubcheck") -> Diagnostics:
-    """Run official EPUBCheck and return complete diagnostic occurrence counts without risking source overwrite."""
+    """Run official EPUBCheck without overwriting inputs or existing files; publish report only when complete."""
     _require(book.is_file(), f"EPUB file does not exist: {book}")
     log_path = report.with_suffix(".log")
     _ensure_distinct_destination(book, report, "EPUBCheck report")
     _ensure_distinct_destination(book, log_path, "EPUBCheck log")
+    _require(report.resolve() != log_path.resolve(), f"EPUBCheck report and log paths must be distinct: {report}")
+    _require(not os.path.lexists(report), f"EPUBCheck report already exists: {report}")
+    _require(not os.path.lexists(log_path), f"EPUBCheck log already exists: {log_path}")
 
     book_resolved = book.resolve()
     cwd = Path.cwd()
@@ -467,7 +485,8 @@ def run_epubcheck(book: Path, report: Path, executable: str = "epubcheck") -> Di
             capture_output=True,
             timeout=180,
         )
-        log_path.write_bytes(proc.stdout + proc.stderr)
+        with log_path.open("xb") as log_handle:
+            log_handle.write(proc.stdout + proc.stderr)
         _require(proc.returncode in {0, 1} and fresh.is_file(), f"EPUBCheck did not complete for {book}")
         data = json.loads(fresh.read_text(encoding="utf-8"))
         checker = data["checker"]
@@ -475,28 +494,30 @@ def run_epubcheck(book: Path, report: Path, executable: str = "epubcheck") -> Di
             Path(checker["path"]).resolve() == book_resolved and bool(checker["checkerVersion"]),
             f"Unexpected EPUBCheck identity for {book}",
         )
-        fresh.replace(report)
-
-    severity_keys = {"FATAL": "nFatal", "ERROR": "nError", "WARNING": "nWarning"}
-    groups: Counter = Counter()
-    counts: Counter = Counter()
-    for entry in data["messages"]:
-        severity = entry["severity"].upper()
-        if severity in severity_keys:
-            groups[severity] += 1
-            _require(entry.get("additionalLocations", 0) == 0, f"Truncated EPUBCheck report: {report}")
-            for loc in entry.get("locations") or [{}]:
-                path = loc.get("path")
-                if path is not None:
-                    decoded = unquote(path)
-                    if decoded in container_paths or (
-                        decoded.startswith("./") and posixpath.normpath(decoded) == relative_book
-                    ):
-                        path = "<container>"
-                counts[(severity, entry["ID"], entry["message"], path, loc.get("context"))] += 1
-    _require(all(groups[s] == checker[k] for s, k in severity_keys.items()), f"Incomplete EPUBCheck report: {report}")
-    failed = bool(groups["FATAL"] or groups["ERROR"])
-    _require(proc.returncode == int(failed), "Unexpected EPUBCheck exit status")
+        severity_keys = {"FATAL": "nFatal", "ERROR": "nError", "WARNING": "nWarning"}
+        groups: Counter = Counter()
+        counts: Counter = Counter()
+        for entry in data["messages"]:
+            severity = entry["severity"].upper()
+            if severity in severity_keys:
+                groups[severity] += 1
+                _require(entry.get("additionalLocations", 0) == 0, f"Truncated EPUBCheck report: {report}")
+                for loc in entry.get("locations") or [{}]:
+                    path = loc.get("path")
+                    if path is not None:
+                        decoded = unquote(path)
+                        if decoded in container_paths or (
+                            decoded.startswith("./") and posixpath.normpath(decoded) == relative_book
+                        ):
+                            path = "<container>"
+                    counts[(severity, entry["ID"], entry["message"], path, loc.get("context"))] += 1
+        _require(
+            all(groups[s] == checker[k] for s, k in severity_keys.items()),
+            f"Incomplete EPUBCheck report: {report}",
+        )
+        failed = bool(groups["FATAL"] or groups["ERROR"])
+        _require(proc.returncode == int(failed), "Unexpected EPUBCheck exit status")
+        os.link(fresh, report)
     return Diagnostics(checker["checkerVersion"], failed, counts)
 
 

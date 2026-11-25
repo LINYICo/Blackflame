@@ -187,24 +187,22 @@ class EpubSafeSecurityTests(unittest.TestCase):
 
             self.assertEqual(epub_safe.sha256_file(src), original_sha)
 
-    def test_run_epubcheck_refuses_report_or_log_overwriting_source(self):
+    def test_run_epubcheck_protects_source_unrelated_files_and_collisions(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             src = root / "book.epub"
             make_bilingual_epub3(src)
             original_sha = epub_safe.sha256_file(src)
 
-            # Direct path collision
+            # Direct, symlink, and hardlink collisions with source
             with self.assertRaisesRegex(ValueError, "must not overwrite"):
                 epub_safe.run_epubcheck(src, src)
 
-            # Symlink collision
             sym = root / "alias.json"
             sym.symlink_to(src)
             with self.assertRaisesRegex(ValueError, "must not overwrite|same file"):
                 epub_safe.run_epubcheck(src, sym)
 
-            # Hardlink collision
             hard = root / "hard.json"
             os.link(src, hard)
             with self.assertRaisesRegex(ValueError, "same file"):
@@ -215,6 +213,29 @@ class EpubSafeSecurityTests(unittest.TestCase):
             make_bilingual_epub3(log_src)
             with self.assertRaisesRegex(ValueError, "must not overwrite"):
                 epub_safe.run_epubcheck(log_src, root / "book.json")
+
+            # Report and log path collision (report ending in .log)
+            with self.assertRaisesRegex(ValueError, "must be distinct"):
+                epub_safe.run_epubcheck(src, root / "check.log")
+
+            # Existing unrelated report or log file must never be overwritten
+            existing_report = root / "existing.json"
+            existing_report.write_text("keep-report", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "already exists"):
+                epub_safe.run_epubcheck(src, existing_report)
+            self.assertEqual(existing_report.read_text(encoding="utf-8"), "keep-report")
+
+            existing_log = root / "fresh.log"
+            existing_log.write_text("keep-log", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "already exists"):
+                epub_safe.run_epubcheck(src, root / "fresh.json")
+            self.assertEqual(existing_log.read_text(encoding="utf-8"), "keep-log")
+
+            # Validating an edited EPUB must not overwrite the original source EPUB
+            edited = root / "edited.epub"
+            edited.write_bytes(src.read_bytes())
+            with self.assertRaisesRegex(ValueError, "already exists"):
+                epub_safe.run_epubcheck(edited, src)
 
             self.assertEqual(epub_safe.sha256_file(src), original_sha)
 
@@ -283,6 +304,31 @@ class EpubSafeVerificationTests(unittest.TestCase):
             )
             self.assertEqual(report["added"], ["OPS/figure2.png"])
             self.assertEqual(report["removed"], ["OPS/figure.png"])
+
+    def test_compare_epubs_reports_skipped_svg_and_nav_spine_docs(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "src.epub"
+            cand = root / "cand.epub"
+            make_bilingual_epub3(src)
+            with ZipFile(src) as z_in, ZipFile(cand, "w") as z_out:
+                for info in z_in.infolist():
+                    data = z_in.read(info)
+                    if info.filename == "OPS/package.opf":
+                        data = data.replace(
+                            b"</manifest>",
+                            b'<item id="svg1" href="page.svg" media-type="image/svg+xml"/></manifest>',
+                        ).replace(
+                            b"</spine>",
+                            b'<itemref idref="svg1"/><itemref idref="nav"/></spine>',
+                        )
+                    z_out.writestr(info, data)
+                z_out.writestr("OPS/page.svg", b'<svg xmlns="http://www.w3.org/2000/svg"/>')
+            cand2 = root / "cand2.epub"
+            cand2.write_bytes(cand.read_bytes())
+            report = epub_safe.compare_epubs(cand, cand2, preserve_spine=True, preserve_text=True)
+            self.assertEqual(report["inspected_reading_docs"], ["OPS/ch1.xhtml"])
+            self.assertEqual(report["skipped_reading_docs"], ["OPS/nav.xhtml", "OPS/page.svg"])
 
     def test_assert_no_new_diagnostics_blocks_regressions(self):
         before = epub_safe.Diagnostics("5.4.0", False, Counter({("WARNING", "W1", "msg", "a.xhtml", None): 1}))

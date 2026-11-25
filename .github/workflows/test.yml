@@ -92,5 +92,6 @@ jobs:
         run: |
           epubcheck --version
           rm -f Blackflame.zip
-          zip -r Blackflame.zip blackflame -x "blackflame/.venv/*" "blackflame/uv.lock" "*/__pycache__/*" "*.pyc" "*.DS_Store"
+          zip -r Blackflame.zip LICENSE blackflame -x "blackflame/.venv/*" "blackflame/uv.lock" "*/__pycache__/*" "*.pyc" "*.DS_Store"
+          python3 -c "import hashlib, pathlib; print('Blackflame.zip SHA-256:', hashlib.sha256(pathlib.Path('Blackflame.zip').read_bytes()).hexdigest())"
           uv run --project blackflame --no-sync python -m unittest discover -s tests -v
