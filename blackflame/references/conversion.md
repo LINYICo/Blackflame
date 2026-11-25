@@ -1,43 +1,35 @@
 # Format Conversion
 
-Use this guide when converting e-books between formats via the installed `ebook-convert` CLI (PyPI `ebook-convert`, a standalone Qt-free packaging of the Calibre conversion pipeline).
+Use this guide for direct e-book format conversion via the installed `ebook-convert` CLI (PyPI `ebook-convert`, standalone Qt-free Calibre conversion pipeline—do not assume Calibre GUI tools, `calibredb`, or Qt PDF plugins exist).
 
-## Scope & Default EPUB Output Policy
+## Direct Invocation & Default EPUB Output
 
-- **Distinguish PyPI `ebook-convert` from full Calibre.** Do not assume Calibre GUI tools, `calibredb`, or Qt-dependent PDF plugins are installed.
-- **Default EPUB outputs to EPUB Latest** (never silently output EPUB 2). Check the CLI's supported modern EPUB flags first with `-h`; currently pass `--epub-version 3`, then verify the actual OPF version (`3.0`), Latest compliance, and EPUBCheck diagnostics (do not treat `--epub-version 3` as a permanent hardcoded definition of Latest).
-- **Non-EPUB target formats** (DOCX, TXT, MOBI, AZW3, etc.): Output directly in the requested format without converting back to EPUB.
-- **Invoke `ebook-convert` directly from the skill's verified environment** using the absolute skill directory path (avoid custom wrapper scripts):
+Per [SKILL.md](../SKILL.md), conversions targeting EPUB default to **EPUB Latest** (never silently EPUB 2), while non-EPUB targets (DOCX, TXT, MOBI, AZW3, etc.) output directly.
+
+1. Check supported flags for the format pair first (`-h`), then invoke directly from the skill environment to a new output path:
 
 ```sh
 uv run --project /abs/path/to/blackflame --no-sync ebook-convert input.ext output.ext -h
 
-# Convert DOCX/HTML/TXT to EPUB Latest (always write to a new output path)
+# Convert to EPUB Latest (currently pass --epub-version 3; verify actual OPF version afterward)
 uv run --project /abs/path/to/blackflame --no-sync ebook-convert source.docx output.epub --epub-version 3
 
-# Convert TXT/Markdown to EPUB with verified metadata (never fabricate unknown fields)
+# Convert TXT/Markdown/HTML to EPUB with verified metadata (never guess from first line or fabricate fields)
 uv run --project /abs/path/to/blackflame --no-sync ebook-convert source.txt output.epub \
-  --epub-version 3 --title "Verified Book Title" --authors "Verified Author" --language zh
+  --epub-version 3 --title "Verified Title" --authors "Verified Author" --language zh
 
-# Convert EPUB to plain text or DOCX
+# Convert EPUB to TXT or DOCX
 uv run --project /abs/path/to/blackflame --no-sync ebook-convert source.epub output.txt
 ```
 
-## Metadata Quality During Conversion
+2. Inspect source metadata first and reuse reliable values. For `TXT`, Markdown, or bare HTML inputs, pass verified `--title`, `--authors`, and `--language` so `ebook-convert` does not guess titles from body lines (such as `THE CONTENTS` or `Section 1`). Leave unverified fields unknown.
+3. Never treat `EPUB → TXT → EPUB` as lossless; if the original EPUB is available, restore verified metadata from it and note TXT's inherent loss of images, styling, TOC, and footnote semantics.
 
-- **Inspect source metadata first.** Reuse reliable metadata from the source book whenever available.
-- **Never guess titles from body lines or fabricate unknown fields.** Plain text (`TXT`), Markdown, and bare HTML lack full bibliographic metadata, causing `ebook-convert` to guess titles from the first heading or line (such as `THE CONTENTS` or `Section 1`). Supply verified `--title`, `--authors`, and `--language` when known; leave unverified fields unknown rather than inventing authors, ISBNs, publishers, or dates.
-- **Round-trip conversions (`EPUB → TXT → EPUB`)**: Plain text cannot retain images, styling, TOC navigation, footnote semantics, or complete metadata. Never describe a TXT round-trip as lossless; if the original EPUB is still available, restore verified metadata from it.
+## Format-Appropriate Verification
 
-## Format-Appropriate Post-Conversion Verification
+A `0` exit code alone never proves content survived cleanly. Verify according to what the source and target formats support:
 
-A `0` exit code alone never proves content was preserved cleanly. Verify according to what the **source and target formats actually support**:
-
-1. **Output integrity**: Non-empty file and valid target format structure.
-2. **Body content**: Inspect extracted chapters or text to confirm actual body paragraphs (including non-ASCII/CJK text, headings, and punctuation) survived without truncation or garbled encoding.
-3. **Metadata, images & navigation (when supported by target format)**:
-   - **EPUB / DOCX outputs**: Verify OPF version (for EPUB), title, author, language, cover artwork, key illustrations, and table of contents links survived conversion.
-   - **Plain-text (`TXT`) or lossy target formats**: Report missing images, styling, TOC navigation, and embedded bibliographic metadata as expected format limitations rather than automatic failure.
-4. **EPUBCheck (when outputting EPUB)**: Run `epub_safe.run_epubcheck(output_epub, report_path)` using a fresh temporary report path and confirm the EPUBCheck version supports the target EPUB standard.
-
-State clearly what was verified programmatically, what format limitations apply, and what still requires visual spot-checking in a target reader.
+- **Integrity & body text**: Non-empty valid output; confirm paragraphs, headings, punctuation, and non-ASCII/CJK text survived without truncation or garbling.
+- **EPUB / DOCX outputs**: Check actual OPF `version` (for EPUB), title, author, language, cover/illustrations, and TOC links.
+- **TXT / lossy outputs**: Report absent images, styling, TOC, and embedded metadata as expected format limitations rather than automatic failure.
+- **EPUB outputs**: Run `epub_safe.run_epubcheck()` using a fresh temporary report path and confirm the validator supports the target EPUB standard ([validation.md](validation.md)).

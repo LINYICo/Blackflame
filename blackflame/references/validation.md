@@ -1,41 +1,41 @@
 # Validation & Safety
 
-Use this guide to interpret `epub_safe.py` checks, apply EPUBCheck delivery rules, and report results accurately across five distinct quality dimensions.
+Use this guide for `epub_safe.py` checks, EPUBCheck delivery rules, three-stage migration verification, and accurate reporting across five quality dimensions.
 
 ## Five Quality Dimensions
 
 Passing one check never proves the others—report them separately:
 
-1. **Container & file safety**: Valid ZIP structure (`mimetype` first and uncompressed, no path traversal, no duplicate entries, no zip bombs), safe XML parsing (no external entities or network DTDs), and preserved inputs/existing files.
+1. **Container & file safety**: Valid ZIP structure (`mimetype` first and uncompressed, safe paths, no duplicates or zip bombs), safe XML parsing (no external entities/DTDs), and preserved inputs/existing files.
 2. **EPUBCheck conformance**: Official W3C EPUBCheck fatal, error, and warning diagnostics.
 3. **Content fidelity**: Unintended text, resources, or reading order were not altered.
-4. **Reader compatibility**: Practical rendering, cover pixel limits (Apple Books 5.6M pixels), reflow, and footnote pop-ups in target readers.
-5. **Unverified aspects**: Anything not directly checked (such as visual typography or CSS rendering in Apple Books or Kindle) must be stated explicitly.
+4. **Reader compatibility**: Practical rendering, cover/image pixel limits (Apple Books 5.6M pixels), reflow, and footnote pop-ups.
+5. **Unverified aspects**: Explicitly state anything not directly checked (e.g., visual rendering in Apple Books or Kindle).
 
 ## EPUBCheck Delivery Rules
 
-- **Establish the source baseline first.** Before editing an EPUB, run `epub_safe.run_epubcheck(source, before_report)` to record any pre-existing errors or warnings.
-- **Never introduce new diagnostics.** Compare before/after runs with `epub_safe.assert_no_new_diagnostics(before, after)`. Do not deliver an output as successfully validated if any new error, warning, or additional occurrence of an existing diagnostic was introduced.
-- **Never claim inherited errors are conformant.** If the source book already contained EPUBCheck errors that were not resolved, do not describe the output as fully conformant; report the inherited baseline clearly and obtain user acceptance when an existing source error must remain unresolved.
-- **Match validator capability to claimed standard.** Confirm the installed EPUBCheck version actually supports the claimed EPUB standard, and if `epubcheck` is unavailable, crashes, or produces an incomplete/truncated report, report validation as **incomplete**.
+- **Record the source baseline first** via `epub_safe.run_epubcheck(source, before_report)`.
+- **Reject new diagnostics** with `epub_safe.assert_no_new_diagnostics(before, after)`. Never deliver an output as validated if new errors, warnings, or extra occurrences were introduced.
+- **Handle inherited errors transparently.** Never describe an output with unresolved source errors as fully conformant; obtain user acceptance when an existing source error must remain.
+- **Match validator capability & report incomplete checks.** Confirm the EPUBCheck version supports the claimed EPUB standard. If `epubcheck` is unavailable, fails, or produces an incomplete report, report validation as **incomplete**.
 
-## Three-Stage Comparison for Migrated EPUBs
+## Three-Stage Verification (Migrated EPUBs)
 
-When upgrading a legacy EPUB (e.g., EPUB 2 → EPUB Latest) before applying user edits, separate verification into three stages using a temporary directory:
+Use a temporary directory to separate migration from user edits when upgrading legacy EPUBs (e.g., EPUB 2 → EPUB Latest):
 
-1. **Original source → Migrated baseline**: Verify migration fidelity (body text preservation, spine order, images, identifiers, and navigation) without forcing an OPF-only member diff, since migration legitimately updates structural files.
-2. **Migrated baseline → Final output**: Verify the user's exact authorized edit scope (e.g., `expected_changed={opf_member}` for metadata-only edits).
-3. **Already-Latest EPUBs**: Compare Original source → Final output directly without creating an intermediate baseline.
+1. **Original source → Migrated baseline**: Verify body text preservation, spine order, images, identifiers, and navigation (do not require an OPF-only diff, since migration legitimately updates structural files).
+2. **Migrated baseline → Final output**: Verify the user's exact authorized edit scope (e.g., `expected_changed={opf_member}`).
+3. **Already-Latest EPUBs**: Compare Original source → Final output directly.
 
-## Actual Guarantees & Limitations of `scripts/epub_safe.py`
+## Guarantees & Limitations of `scripts/epub_safe.py`
 
-- **`parse_xml(data)`**: Strictly parses XML/XHTML within `LIMIT_XML` (16 MiB) with `no_network=True, load_dtd=False, resolve_entities=False`. Guarantees XML well-formedness, not EPUB schema validity.
-- **`check_zip(archive, stream)` & `protection_entries(names)`**: Validates EPUB `mimetype` header, path safety, uniqueness, compression, and size bounds; flags `encryption.xml`, `rights.xml`, and `signatures.xml`.
-- **`replace_members(source, output, replacements)`**: Refuses to overwrite `source` or any existing file; verifies SHA-256 of every unchanged file member and verifies each replaced member matches the exact requested bytes.
+- **`parse_xml(data)`**: Strictly parses XML/XHTML within `LIMIT_XML` (16 MiB) with `no_network=True, load_dtd=False, resolve_entities=False`. Checks XML well-formedness, not EPUB schema validity.
+- **`check_zip(archive, stream)` & `protection_entries(names)`**: Validates EPUB `mimetype`, paths, uniqueness, compression, and size bounds; flags `encryption.xml`, `rights.xml`, and `signatures.xml`.
+- **`replace_members(source, output, replacements)`**: Refuses to overwrite `source` or any existing file, rejects directory entries as replacement targets, verifies SHA-256 of every unchanged file member, and confirms each replaced member matches the requested bytes.
 - **`compare_epubs(source, candidate, ...)`**:
-  - Compares exact file-member SHA-256 hashes (ignoring empty ZIP directory entries). Use exact member hashes whenever untouched chapters, images, CSS, or fonts must remain byte-identical.
-  - With `preserve_spine=True`, verifies all spine `idref` targets exist and checks reading order and `page-progression-direction`.
-  - With `preserve_text=True`, hashes normalized reading text across spine XHTML documents (preserving block-tag boundaries and `<pre>`/`<code>`/`xml:space="preserve"` whitespace), fails if zero spine XHTML documents are inspectable, and returns `inspected_reading_docs` and `skipped_reading_docs`.
-  - **Known limitations of `preserve_text`**: Normalized text hashing is **not** a full XHTML or visual fidelity proof. It does not detect empty-paragraph or repeated `<br/>` differences, heading-level changes (`<h1>` vs `<h2>`), changes inside SVG spine documents or non-spine reading content (reported in `skipped_reading_docs` when in spine), complex inherited `xml:space` overrides, inline-markup token boundaries, CSS styling, or image pixel changes. For authorized edits inside a chapter, verify the actual text and structural diff directly; use EPUBCheck for spec conformance and task-specific inspection for layout/navigation.
-- **`image_dimensions(data)`**: Lightweight header probe for PNG, JPEG, and GIF dimensions (`(width, height)` or `None`). Not a full image decoder or pixel-level integrity validator.
-- **`run_epubcheck(book, report)` & `assert_no_new_diagnostics(before, after)`**: Rejects any `report` or `.log` path that collides with `book`, with each other, or with any already-existing file; runs EPUBCheck in a dedicated temporary directory; publishes `report` only after verifying identity, completeness, and exit status so failed/incomplete runs never leave a misleading report JSON behind.
+  - Compares exact file-member SHA-256 digests (ignoring empty ZIP directory entries). Use exact member hashes whenever untouched files must remain byte-identical.
+  - `preserve_spine=True` validates spine `idref` targets, reading order, and `page-progression-direction`.
+  - `preserve_text=True` hashes normalized reading text across spine XHTML documents (preserving block boundaries and `<pre>`/`<code>`/`xml:space="preserve"` whitespace), fails if zero spine XHTML documents are inspectable, and returns `inspected_reading_docs` and `skipped_reading_docs`.
+  - **Limitations of `preserve_text`**: Not a full XHTML or visual fidelity proof. Does not detect empty-paragraph or repeated `<br/>` changes, heading-level changes (`<h1>` vs `<h2>`), SVG spine docs or non-spine content (listed in `skipped_reading_docs` when in spine), inherited `xml:space` overrides, inline-markup boundaries, CSS styling, or image pixel changes. Verify in-chapter text/structural diffs directly.
+- **`image_dimensions(data)`**: Lightweight header probe for PNG/JPEG/GIF dimensions (`(w, h)` or `None`), not a full decoder.
+- **`run_epubcheck(book, report)`**: Rejects any `report` or `.log` path colliding with `book`, with each other, or with any existing file; runs in a temporary directory and publishes `report` via `os.link()` only after identity, completeness, and exit-status checks pass.

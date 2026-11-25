@@ -310,6 +310,8 @@ def replace_members(
             _require(allow_protected or not protected, f"Protected publication: {', '.join(protected)}")
             unknown = sorted(set(replacements) - names)
             _require(not unknown, f"Replacement target not in archive: {', '.join(unknown)}")
+            dir_targets = sorted(name for name in replacements if name.endswith("/") or archive.getinfo(name).is_dir())
+            _require(not dir_targets, f"Cannot replace directory entries: {', '.join(dir_targets)}")
             _require("mimetype" not in replacements, "Replacing mimetype is not permitted")
 
             before: dict[str, str] = {}

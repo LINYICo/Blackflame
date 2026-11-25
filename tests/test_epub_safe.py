@@ -383,6 +383,10 @@ class EpubSafeVerificationTests(unittest.TestCase):
                 preserve_text=True,
             )
 
+            # 4. Passing a directory entry as a replacement target is explicitly rejected (no KeyError)
+            with self.assertRaisesRegex(ValueError, "Cannot replace directory entries"):
+                epub_safe.replace_members(src_with_dirs, root / "dir-replace.epub", {"OPS/": b"x"})
+
     def test_assert_no_new_diagnostics_blocks_regressions(self):
         before = epub_safe.Diagnostics("5.4.0", False, Counter({("WARNING", "W1", "msg", "a.xhtml", None): 1}))
         same = epub_safe.Diagnostics("5.4.0", False, Counter({("WARNING", "W1", "msg", "a.xhtml", None): 1}))
