@@ -1,5 +1,19 @@
 # Release notes
 
+## v1.4.0 · 2026-11-25
+
+### Feature
+
+- Rename the project, skill directory, environment variables, and documentation from `EpubLib` to `Blackflame`.
+- Detect Homebrew, Python 3.13+, `uv`, EPUBCheck, and Python dependencies on first use, reusing existing local tools to avoid duplicate installation.
+- Silently install only missing runtime components (Homebrew, Python, `uv`, EPUBCheck, and missing Python packages) on first use when no local runtime is present.
+
+### Dependencies & Tooling
+
+- Migrate project dependency management to `uv` (`pyproject.toml` and `uv.lock`) with `epublib`, `beautifulsoup4`, `lxml`, and `ebook-convert` (requires Python 3.13+).
+- Remove all `EbookLib` references and standardize on `epublib`.
+- Add `ruff.toml` and `shuck.toml` configurations and integrate Ruff and Shuck checks into GitHub Actions CI.
+
 ## [v1.3.0](https://github.com/LINYICo/Blackflame/releases/tag/v1.3.0) · 2026-11-22
 
 ### Feature

@@ -65,3 +65,50 @@ class MaintenanceTests(unittest.TestCase):
             skill.refresh(settings, tools)
             command.assert_not_called()
             create.assert_not_called()
+
+    def test_bootstrap_reuses_existing_host_environment(self):
+        tools = {
+            "Homebrew": {"owner": "homebrew", "path": "/opt/homebrew/bin/brew"},
+            "Python": {"owner": "homebrew", "path": "/opt/homebrew/bin/python3", "version": "3.15"},
+            "uv": {"owner": "homebrew", "path": "/opt/homebrew/bin/uv"},
+            "EPUBCheck": {"owner": "homebrew", "path": "/opt/homebrew/bin/epubcheck"},
+            **{p: {"owner": "uv", "path": f"/venv/{p}"} for p in skill.PACKAGES.values()},
+        }
+        settings = {}
+        with (
+            patch.object(skill, "install_homebrew_silently") as inst_brew,
+            patch.object(skill, "install_python_silently") as inst_py,
+            patch.object(skill, "install_uv_silently") as inst_uv,
+            patch.object(skill, "install_epubcheck_silently") as inst_chk,
+        ):
+            skill.bootstrap_runtime(settings, tools)
+            inst_brew.assert_not_called()
+            inst_py.assert_not_called()
+            inst_uv.assert_not_called()
+            inst_chk.assert_not_called()
+            self.assertEqual(settings["python_manager"], "uv")
+            self.assertEqual(settings["checker_manager"], "homebrew")
+            self.assertTrue(settings["auto_install"])
+
+    def test_bootstrap_silently_installs_missing_tools(self):
+        tools = {
+            "Homebrew": {"owner": "missing"},
+            "Python": {"owner": "missing"},
+            "uv": {"owner": "missing"},
+            "EPUBCheck": {"owner": "missing"},
+            **{p: {"owner": "missing"} for p in skill.PACKAGES.values()},
+        }
+        settings = {}
+        with (
+            patch.object(skill, "install_homebrew_silently", return_value="/opt/homebrew/bin/brew") as inst_brew,
+            patch.object(skill, "install_python_silently", return_value="/opt/homebrew/bin/python3") as inst_py,
+            patch.object(skill, "install_uv_silently", return_value="/opt/homebrew/bin/uv") as inst_uv,
+            patch.object(skill, "install_epubcheck_silently") as inst_chk,
+        ):
+            skill.bootstrap_runtime(settings, tools)
+            inst_brew.assert_called_once()
+            inst_py.assert_called_once_with("/opt/homebrew/bin/brew", None)
+            inst_uv.assert_called_once_with("/opt/homebrew/bin/brew")
+            inst_chk.assert_called_once_with(settings, "/opt/homebrew/bin/brew")
+            self.assertEqual(settings["python_manager"], "uv")
+            self.assertEqual(settings["checker_manager"], "homebrew")

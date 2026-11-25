@@ -1,4 +1,4 @@
-"""First-use preferences and monthly runtime maintenance for the Blackflame skill."""
+"""First-use runtime detection, silent bootstrap, and monthly maintenance for Blackflame."""
 
 import argparse
 import calendar
@@ -23,11 +23,40 @@ ROOT = Path(
     os.environ.get("BLACKFLAME_HOME", Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "blackflame")
 ).resolve()
 CLI = Path(__file__).with_name("epub_patch.py")
+MIN_PYTHON = (3, 13)
+COMMON_BIN_DIRS = (
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/home/linuxbrew/.linuxbrew/bin",
+    str(Path.home() / ".local/bin"),
+)
+PACKAGES = {"lxml": "lxml", "bs4": "beautifulsoup4", "epublib": "epublib", "ebook_convert": "ebook-convert"}
 
 
 def next_month(date):
     year, month = date.year + (date.month == 12), date.month % 12 + 1
     return date.replace(year=year, month=month, day=min(date.day, calendar.monthrange(year, month)[1]))
+
+
+def search_path():
+    entries = [p for p in os.environ.get("PATH", "").split(os.pathsep) if p]
+    for directory in COMMON_BIN_DIRS:
+        if directory not in entries and Path(directory).is_dir():
+            entries.append(directory)
+    return os.pathsep.join(entries)
+
+
+def find_executable(name):
+    return shutil.which(name, path=search_path())
+
+
+def ensure_on_path(executable):
+    if not executable:
+        return
+    directory = str(Path(executable).parent)
+    entries = [p for p in os.environ.get("PATH", "").split(os.pathsep) if p]
+    if directory not in entries:
+        os.environ["PATH"] = os.pathsep.join([directory, *entries]) if entries else directory
 
 
 @contextmanager
@@ -52,12 +81,15 @@ def save(settings):
     tmp.replace(ROOT / "settings.json")
 
 
-def run_quietly(args):
+def run_quietly(args, extra_env=None):
     # Environment-wide installer target overrides must not redirect a venv write.
     env = os.environ.copy()
+    env["PATH"] = search_path()
     for key in ("PIP_TARGET", "PIP_PREFIX", "PIP_USER", "UV_TARGET", "UV_PREFIX", "UV_SYSTEM_PYTHON"):
         env.pop(key, None)
-    proc = subprocess.run(args, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=420)
+    if extra_env:
+        env.update(extra_env)
+    proc = subprocess.run(args, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=600)
     if proc.returncode:
         raise RuntimeError(proc.stdout.strip()[-1800:] or f"{args[0]} exited with status {proc.returncode}")
 
@@ -66,11 +98,40 @@ def java_executable():
     candidates = []
     if os.environ.get("JAVA_HOME"):
         candidates.append(str(Path(os.environ["JAVA_HOME"]) / "bin" / "java"))
-    candidates += [shutil.which("java"), "/opt/homebrew/opt/openjdk/bin/java", "/usr/local/opt/openjdk/bin/java"]
+    candidates += [find_executable("java"), "/opt/homebrew/opt/openjdk/bin/java", "/usr/local/opt/openjdk/bin/java"]
     for java in candidates:
         if java and Path(java).is_file() and subprocess.run([java, "-version"], capture_output=True).returncode == 0:
             return java
     return None
+
+
+def python_version(executable):
+    try:
+        proc = subprocess.run(
+            [executable, "-c", "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except OSError:
+        return None
+    if proc.returncode == 0:
+        parts = proc.stdout.strip().split(".")
+        if len(parts) == 2 and all(p.isdigit() for p in parts):
+            return int(parts[0]), int(parts[1])
+    return None
+
+
+def find_python():
+    if sys.version_info[:2] >= MIN_PYTHON:
+        return sys.executable, f"{sys.version_info[0]}.{sys.version_info[1]}"
+    for name in ("python3.15", "python3.14", "python3.13", "python3"):
+        exe = find_executable(name)
+        if exe:
+            version = python_version(exe)
+            if version and version >= MIN_PYTHON:
+                return exe, f"{version[0]}.{version[1]}"
+    return None, None
 
 
 def install_checker(dest):
@@ -93,11 +154,8 @@ def install_checker(dest):
     return dest / name / "epubcheck.jar"
 
 
-PACKAGES = {"lxml": "lxml", "bs4": "beautifulsoup4", "epublib": "epublib", "ebook_convert": "ebook-convert"}
-
-
 def brew_cellar():
-    if brew := shutil.which("brew"):
+    if brew := find_executable("brew"):
         result = subprocess.run([brew, "--cellar"], capture_output=True, text=True, timeout=30)
         if result.returncode == 0 and result.stdout.strip():
             return Path(result.stdout.strip()).resolve()
@@ -131,6 +189,26 @@ def legacy_library(settings):
 def discover(settings):
     cellar = brew_cellar()
     tools = {}
+    brew = find_executable("brew")
+    tools["Homebrew"] = dict(owner="homebrew", path=brew) if brew else dict(owner="missing")
+    py_path, py_ver = find_python()
+    if py_path:
+        py_formula = formula_owner(py_path, cellar)
+        tools["Python"] = dict(
+            owner="homebrew" if py_formula else "external",
+            path=py_path,
+            version=py_ver,
+            formula=py_formula,
+        )
+    else:
+        tools["Python"] = dict(owner="missing")
+    uv_exe = find_executable("uv")
+    if uv_exe:
+        uv_formula = formula_owner(uv_exe, cellar)
+        tools["uv"] = dict(owner="homebrew" if uv_formula else "external", path=uv_exe, formula=uv_formula)
+    else:
+        tools["uv"] = dict(owner="missing")
+
     legacy = legacy_library(settings)
     for module, package in PACKAGES.items():
         try:
@@ -148,9 +226,9 @@ def discover(settings):
             tools[package] = dict(owner="legacy", path=str(legacy))
         else:
             tools[package] = dict(
-                owner="unsupported" if module == "epublib" and sys.version_info < (3, 13) else "missing"
+                owner="unsupported" if module == "epublib" and sys.version_info < MIN_PYTHON else "missing"
             )
-    exe = shutil.which("epubcheck")
+    exe = find_executable("epubcheck")
     jar = os.environ.get("BLACKFLAME_CHECKER_JAR")
     managed = settings.get("checker", {}) or settings.get("runtime", {})
     if jar and Path(jar).is_file():
@@ -186,14 +264,97 @@ def environment(settings):
     return Path(sys.executable)
 
 
+def install_homebrew_silently():
+    if sys.platform == "win32":
+        return None
+    run_quietly(
+        [
+            "/bin/bash",
+            "-c",
+            "curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh | /bin/bash",
+        ],
+        extra_env={"NONINTERACTIVE": "1"},
+    )
+    brew = find_executable("brew")
+    ensure_on_path(brew)
+    return brew
+
+
+def install_python_silently(brew, uv_exe):
+    if brew:
+        run_quietly([brew, "install", "--quiet", "python"], extra_env={"HOMEBREW_NO_AUTO_UPDATE": "1"})
+    elif uv_exe:
+        run_quietly([uv_exe, "python", "install", "3.13"])
+    py_path, _ = find_python()
+    ensure_on_path(py_path)
+    return py_path
+
+
+def install_uv_silently(brew):
+    if brew:
+        run_quietly([brew, "install", "--quiet", "uv"], extra_env={"HOMEBREW_NO_AUTO_UPDATE": "1"})
+    elif sys.platform != "win32":
+        run_quietly(["/bin/sh", "-c", "curl -LsSf https://astral.sh/uv/install.sh | sh"])
+    uv_exe = find_executable("uv")
+    ensure_on_path(uv_exe)
+    return uv_exe
+
+
+def install_epubcheck_silently(settings, brew):
+    if brew:
+        try:
+            run_quietly([brew, "install", "--quiet", "epubcheck"], extra_env={"HOMEBREW_NO_AUTO_UPDATE": "1"})
+            if exe := find_executable("epubcheck"):
+                ensure_on_path(exe)
+                return
+        except RuntimeError:
+            pass
+    java = java_executable()
+    if not java:
+        raise RuntimeError("EPUBCheck installation requires Homebrew or an existing Java runtime")
+    with TemporaryDirectory(dir=ROOT) as tmp:
+        jar = install_checker(Path(tmp))
+        run_quietly([java, "-jar", str(jar), "--version"])
+        parent = ROOT / "checker" / jar.parent.name
+        parent.parent.mkdir(exist_ok=True)
+        if not parent.exists():
+            jar.parent.rename(parent)
+        settings["checker"] = dict(java=java, jar=str(parent / jar.name))
+
+
+def bootstrap_runtime(settings, tools):
+    """Reuse existing host tools; silently install only missing Homebrew, Python, uv, and EPUBCheck."""
+    brew = tools["Homebrew"].get("path")
+    if not brew and sys.platform != "win32":
+        brew = install_homebrew_silently()
+
+    if tools["Python"]["owner"] == "missing":
+        install_python_silently(brew, tools["uv"].get("path"))
+
+    uv_exe = tools["uv"].get("path")
+    if not uv_exe:
+        uv_exe = install_uv_silently(brew)
+
+    if tools["EPUBCheck"]["owner"] == "missing":
+        install_epubcheck_silently(settings, brew)
+
+    settings.setdefault("auto_install", True)
+    settings.setdefault("platform", "general")
+    settings.setdefault("python_manager", "uv" if uv_exe else "pip")
+    settings.setdefault("checker_manager", "homebrew" if brew else "official")
+    settings.setdefault("update_interval_months", 1)
+
+
 def make_environment(settings, packages, dest):
     method = settings["python_manager"]
     python = env_python(dest)
-    if method == "uv":
-        run_quietly(["uv", "venv", "--python", sys.executable, str(dest)])
-        install = ["uv", "pip", "install", "--python", str(python)]
+    py_path, _ = find_python()
+    base_python = py_path or sys.executable
+    if method == "uv" and (uv_exe := find_executable("uv")):
+        run_quietly([uv_exe, "venv", "--python", base_python, str(dest)])
+        install = [uv_exe, "pip", "install", "--python", str(python)]
     else:
-        run_quietly([sys.executable, "-m", "venv", str(dest)])
+        run_quietly([base_python, "-m", "venv", str(dest)])
         install = [
             str(python),
             "-m",
@@ -245,6 +406,7 @@ def update_dedicated(settings, tools):
             and Path(tools[p]["path"]).resolve().is_relative_to(Path(sys.prefix).resolve())
         ]
         if owned:
+            uv_exe = find_executable("uv") or "uv"
             command = (
                 [
                     sys.executable,
@@ -257,7 +419,7 @@ def update_dedicated(settings, tools):
                     sys.prefix,
                 ]
                 if manager == "pip"
-                else ["uv", "pip", "install", "--python", sys.executable]
+                else [uv_exe, "pip", "install", "--python", sys.executable]
             )
             run_quietly([*command, "--upgrade", *owned])
 
@@ -265,12 +427,13 @@ def update_dedicated(settings, tools):
 def refresh(settings, tools, approved=(), install_checker_now=False):
     update_dedicated(settings, tools)
     # Only a proven Homebrew owner may update an existing formula.
+    brew = find_executable("brew")
     formulas = sorted({v["formula"] for v in tools.values() if v.get("formula")})
-    if formulas:
-        pinned = subprocess.check_output(["brew", "list", "--pinned"], text=True).splitlines()
+    if formulas and brew:
+        pinned = subprocess.check_output([brew, "list", "--pinned"], text=True).splitlines()
         for formula in formulas:
             if formula not in pinned:
-                run_quietly(["brew", "upgrade", "--formula", formula])
+                run_quietly([brew, "upgrade", "--quiet", "--formula", formula])
     active = settings.get("environment", {})
     missing = [
         p
@@ -284,7 +447,7 @@ def refresh(settings, tools, approved=(), install_checker_now=False):
         for package in packages:
             if package not in mappings:
                 raise ValueError(f"Provide --brew-formula {package}=FORMULA or select only mapped packages")
-            run_quietly(["brew", "install", "--formula", mappings[package]])
+            run_quietly([brew or "brew", "install", "--quiet", "--formula", mappings[package]])
         if packages:
             visible = discover(settings)
             for package in packages:
@@ -293,8 +456,8 @@ def refresh(settings, tools, approved=(), install_checker_now=False):
     checker = tools["EPUBCheck"]
     method = settings.get("checker_manager")
     if checker["owner"] == "missing" and install_checker_now and method == "homebrew":
-        run_quietly(["brew", "install", "--formula", "epubcheck"])
-        if not shutil.which("epubcheck"):
+        run_quietly([brew or "brew", "install", "--quiet", "--formula", "epubcheck"])
+        if not find_executable("epubcheck"):
             raise RuntimeError("Homebrew installed EPUBCheck but it is unavailable on PATH")
     elif (checker["owner"] in ("official", "legacy") and method == "official") or (
         checker["owner"] == "missing" and install_checker_now and method == "official"
@@ -347,12 +510,31 @@ def maintain(settings, tools, approved=(), install_checker_now=False):
         shutil.rmtree(old.parent.parent, ignore_errors=True)
 
 
+def first_use_setup(settings, tools):
+    """Detect existing host environment on first run and silently install only missing components."""
+    bootstrap_runtime(settings, tools)
+    tools = discover(settings)
+    missing_pkgs = [p for p in PACKAGES.values() if tools[p]["owner"] == "missing"]
+    if missing_pkgs and settings.get("python_manager") in ("pip", "uv"):
+        dest = Path(mkdtemp(prefix="env-", dir=ROOT))
+        try:
+            settings["environment"] = make_environment(settings, missing_pkgs, dest)
+        except BaseException:
+            shutil.rmtree(dest)
+            raise
+    now = datetime.now(UTC)
+    settings.update(last_updated_at=now.isoformat(), next_update_at=next_month(now).isoformat())
+    settings.pop("last_update_error", None)
+    save(settings)
+    return discover(settings)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("status")
     setup = commands.add_parser("configure")
-    setup.add_argument("--auto-install", required=True, choices=["yes", "no"])
+    setup.add_argument("--auto-install", default="yes", choices=["yes", "no"])
     setup.add_argument("--platform", required=True, help="Reading platform, or general")
     setup.add_argument("--dedicated-venv", choices=("yes", "no"), help="Allow owner updates in this standalone venv")
     setup.add_argument("--python-manager", choices=("pip", "uv", "homebrew", "manual"))
@@ -368,6 +550,7 @@ def main():
     with settings_lock():
         path = ROOT / "settings.json"
         settings = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        first_use = not settings
         tools = discover(settings)
         if args.command == "configure":
             updates = {"auto_install": args.auto_install == "yes", "platform": args.platform.strip() or "general"}
@@ -388,34 +571,34 @@ def main():
             for key in ("python_manager", "checker_manager"):
                 if value := getattr(args, key):
                     updates[key] = value
-            if args.auto_install == "yes":
-                if not (args.package or args.install_epubcheck):
-                    parser.error("Name each approved installation with --package or --install-epubcheck")
-                if args.package and not args.python_manager:
-                    parser.error("Choose --python-manager for this installation")
-                if args.install_epubcheck and not args.checker_manager:
-                    parser.error("Choose --checker-manager for this installation")
-            elif args.package or args.install_epubcheck:
+            if args.auto_install == "no" and (args.package or args.install_epubcheck):
                 parser.error("Installation requires --auto-install yes")
             if any(settings.get(k) != v for k, v in updates.items() if k != "platform"):
                 settings["next_update_at"] = None
             settings.update(updates, update_interval_months=1)
             save(settings)
-        if settings:
-            approved = args.package or () if args.command == "configure" else ()
-            install_checker_now = args.command == "configure" and args.install_epubcheck
-            maintain(settings, tools, approved, install_checker_now)
+            if first_use and settings["auto_install"]:
+                tools = first_use_setup(settings, tools)
+            else:
+                approved = args.package or ()
+                maintain(settings, tools, approved, args.install_epubcheck)
+                tools = discover(settings)
+        elif first_use:
+            tools = first_use_setup(settings, tools)
+        else:
+            maintain(settings, tools)
             tools = discover(settings)
+
         if args.command == "status":
             active = settings.get("environment", {})
             if environment(settings) != Path(sys.executable):
-                for package in active["packages"]:
+                for package in active.get("packages", ()):
                     if tools[package]["owner"] == "missing":
                         tools[package] = dict(owner=active["manager"], path=str(environment(settings)))
             print(
                 json.dumps(
                     dict(
-                        first_use=not settings,
+                        first_use=first_use,
                         interpreter=sys.executable,
                         platform=settings.get("platform"),
                         missing=[p for p, v in tools.items() if v["owner"] == "missing"],
@@ -426,13 +609,12 @@ def main():
                 )
             )
             return 0
-        if not settings:
-            parser.exit(2, "First use: run status and configure reader preferences.\n")
         if not forwarded:
             if settings.get("last_update_error"):
                 parser.exit(1, settings["last_update_error"] + "\n")
             return 0
         env = os.environ.copy()
+        env["PATH"] = search_path()
         python = environment(settings)
         if (legacy := legacy_library(settings)) and python == Path(sys.executable):
             # Host packages take precedence over a compatible 1.2.0 fallback.

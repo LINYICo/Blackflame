@@ -3,18 +3,18 @@ name: blackflame
 description: Inspect and edit existing EPUB 2 and EPUB 3 publications. Use for metadata corrections, XHTML copyediting, promotional content removal, cover replacement, EPUB 3 migration, or Apple Books compatibility. Verify the edited copy against the source.
 license: MIT
 metadata:
-  version: "1.3.0"
+  version: "1.4.0"
 ---
 
 # Blackflame
 
-## First use and reader preferences
+## First use and runtime environment
 
-Run `python3 scripts/skill.py status` with the user's chosen interpreter. Check each tool's path, owner, and availability. If the user names a uv project, venv, Conda environment, or interpreter, use that environment for discovery. For a uv project, use its environment's Python directly. A package visible in another Python environment is a reason to select that interpreter and repeat discovery.
+Run `python3 scripts/skill.py status` with the user's chosen interpreter (or `uv run python scripts/skill.py status` in a uv project).
 
-- Reuse installed tools without asking about installation. Ask only about missing tools needed for the task. Name the missing tools and ask whether the user wants to install them now. Offer applicable installation methods and a skip option. Wait for explicit approval and the user’s choice before running any installer. Ask again for newly missing tools even if previous installations were approved. A manager on PATH alone does not establish ownership.
-- On first use, ask for the preferred reader unless the user already named one. Save preferences with `configure --platform PLATFORM --auto-install no` when no installation is needed. An explicit platform for the current task takes precedence.
-- For authorized missing dependencies, use `--auto-install yes` with the user's choice of `--python-manager pip|uv|homebrew|manual` and/or `--checker-manager homebrew|official|manual`. Limit installation to the approved libraries with repeated `--package NAME`. Add `--install-epubcheck` only when the user approves installing EPUBCheck. For brewed Python libraries, record the user’s formula with `--brew-formula PACKAGE=FORMULA`. Use `manual` for tools the user manages separately. When the user has not selected a method, continue with available tools.
+- **Detect and reuse local environment.** On first use, `skill.py` inspects the host environment for Homebrew, Python 3.13+, `uv`, EPUBCheck, and Python libraries (`lxml`, `beautifulsoup4`, `epublib`, `ebook-convert`). All already-installed tools and packages are reused directly without duplicate installation.
+- **Silent installation when missing.** If any required runtime component is absent (Homebrew, Python, `uv`, EPUBCheck, or missing Python packages), `skill.py` silently installs only the missing components on first use and records the environment in `~/.config/blackflame/settings.json`.
+- **Reader preferences.** Ask for the preferred reader platform if not specified, and save it with `python3 scripts/skill.py configure --platform PLATFORM`. An explicit platform for the current task takes precedence.
 - Run editing commands through `skill.py run` and optional Python inspection through `skill.py python`. Report a maintenance failure when it affects the requested operation. See the [tool reference](references/tools.md) for monthly updates and existing environments.
 
 ## Editing workflow

@@ -4,11 +4,11 @@ An agent skill for editing existing EPUB books. Inspect the package, review a ta
 
 ## Install
 
-Download [Blackflame.zip](https://github.com/LINYICo/Blackflame/releases/download/v1.3.0/Blackflame.zip) and extract the `blackflame/` folder into your client's skills directory. For Codex, use `~/.agents/skills/`. Start with Python 3.13 or later.
+Download [Blackflame.zip](https://github.com/LINYICo/Blackflame/releases/download/v1.4.0/Blackflame.zip) and extract the `blackflame/` folder into your client's skills directory. For Codex, use `~/.agents/skills/`. Start with Python 3.13 or later.
 
-First use inventories the selected interpreter and EPUBCheck. Installed tools are reused. If a needed tool is missing, the skill asks which installation method you use. Monthly maintenance follows recorded ownership and preferences. Shared Python environments remain under their existing manager.
+First use detects Homebrew, Python 3.13+, uv, EPUBCheck, and Python libraries on your machine, reusing everything already installed to avoid duplicate setup. Any missing runtime components are installed silently on first run, and monthly maintenance follows recorded ownership. Shared Python environments remain under their existing manager.
 
-Preferences and the UTC update schedule are stored in `~/.config/blackflame/settings.json`. The skill respects `XDG_CONFIG_HOME` and supports an explicit `BLACKFLAME_HOME`. To change preferences, run `python3 blackflame/scripts/skill.py configure --auto-install no --platform general` with your choices. [Dependency details](blackflame/references/tools.md)
+Preferences and the UTC update schedule are stored in `~/.config/blackflame/settings.json`. The skill respects `XDG_CONFIG_HOME` and supports an explicit `BLACKFLAME_HOME`. To change preferences, run `python3 blackflame/scripts/skill.py configure --platform general` with your choices. [Dependency details](blackflame/references/tools.md)
 
 ## Use
 
