@@ -15,6 +15,7 @@ All generated, modified, or repaired EPUBs default to **EPUB Standard: Latest**â
 - Specification: `https://www.w3.org/TR/epub/latest/` (all versions: `https://www.w3.org/TR/epub/all/`).
 - Follow the latest formal W3C Recommendation as standards evolve rather than hardcoding a permanent revision.
 - **OPF `version`**: EPUB 3.3 packages declare `version="3.0"` in `<package>`. Never set `version="3.3"` or `version="Latest"`.
+- **Modification timestamp (`dcterms:modified`)**: Per W3C EPUB Latest (`https://www.w3.org/TR/epub-33/#sec-opf-dcterms-modified`), whenever an EPUB 3 publication is actually modified (body, CSS, cover, TOC, footnotes, metadata, or structure), update the single unrefined `<meta property="dcterms:modified">` in the OPF to UTC (`YYYY-MM-DDThh:mm:ssZ`), while preserving the original publication date (`dc:date`) and all unauthorized metadata. Never modify files on read-only queries or repack books with no actual changes.
 - **Actual verification**: Always check the output OPF `version` and confirm the validator version supports the target standard; never assume Latest compliance solely from `--epub-version 3`, `version="3.0"`, or EPUBCheck's exit code.
 
 ## Mandatory Safety Rules
@@ -69,6 +70,5 @@ Tool responsibilities:
 
 ## Verification & Delivery
 
-- Choose verification proportional to the task and follow [validation.md](references/validation.md) for every file-creating or file-modifying task.
-- Run EPUBCheck even on read-only tasks when the user explicitly requests compliance validation; skip it for routine metadata queries.
+- Choose verification proportional to the task and follow the EPUBCheck applicability and delivery rules in [validation.md](references/validation.md).
 - Verify the output's actual format and EPUB standard, keep the original file untouched, and deliver the verified new path with concise notes on **exact changes**, **migration outcome** (if applicable), **content fidelity**, **EPUBCheck conformance**, **reader compatibility**, and **unverified aspects**.

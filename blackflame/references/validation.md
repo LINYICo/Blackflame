@@ -12,9 +12,18 @@ Passing one check never proves the others—report them separately:
 4. **Reader compatibility**: Practical rendering, cover/image pixel limits (Apple Books 5.6M pixels), reflow, and footnote pop-ups.
 5. **Unverified aspects**: Explicitly state anything not directly checked (e.g., visual rendering in Apple Books or Kindle).
 
-## EPUBCheck Delivery Rules
+## EPUBCheck Applicability & Delivery Rules
 
-- **Record the source baseline first** via `epub_safe.run_epubcheck(source, before_report)`.
+Apply EPUBCheck only where EPUB conformance is relevant—never invoke EPUBCheck on non-EPUB inputs (`TXT`, `HTML`, `DOCX`, Markdown, etc.) or non-EPUB outputs:
+
+- **EPUB editing & migration**: Record the source baseline first via `epub_safe.run_epubcheck(source, before_report)`, then verify the output with `epub_safe.assert_no_new_diagnostics(before, after)`.
+- **Non-EPUB → EPUB conversion**: Run EPUBCheck only on the generated EPUB output (not on the non-EPUB source).
+- **Non-EPUB outputs** (`TXT`, `DOCX`, `MOBI`, `AZW3`, etc.): Verify according to the target format ([conversion.md](conversion.md)); do not run EPUBCheck.
+- **Routine read-only inspection**: Skip EPUBCheck for ordinary metadata or structure queries.
+- **Explicit compliance requests**: Run EPUBCheck on an EPUB whenever the user explicitly asks for EPUB compliance validation, even in a read-only task.
+
+Delivery rules when EPUBCheck applies:
+
 - **Reject new diagnostics** with `epub_safe.assert_no_new_diagnostics(before, after)`. Never deliver an output as validated if new errors, warnings, or extra occurrences were introduced.
 - **Handle inherited errors transparently.** Never describe an output with unresolved source errors as fully conformant; obtain user acceptance when an existing source error must remain.
 - **Match validator capability & report incomplete checks.** Confirm the EPUBCheck version supports the claimed EPUB standard. If `epubcheck` is unavailable, fails, or produces an incomplete report, report validation as **incomplete**.
@@ -24,8 +33,8 @@ Passing one check never proves the others—report them separately:
 Use a temporary directory to separate migration from user edits when upgrading legacy EPUBs (e.g., EPUB 2 → EPUB Latest):
 
 1. **Original source → Migrated baseline**: Verify body text preservation, spine order, images, identifiers, and navigation (do not require an OPF-only diff, since migration legitimately updates structural files).
-2. **Migrated baseline → Final output**: Verify the user's exact authorized edit scope (e.g., `expected_changed={opf_member}`).
-3. **Already-Latest EPUBs**: Compare Original source → Final output directly.
+2. **Migrated baseline → Final output**: Verify the user's exact authorized edit scope (e.g., `expected_changed={opf_member}` for metadata-only edits, or `{edited_member, opf_member}` when an EPUB 3 body/CSS edit also updates `dcterms:modified`, confirming no other unauthorized OPF changes).
+3. **Already-Latest EPUBs**: Compare Original source → Final output directly, allowing the OPF member alongside edited resources when `dcterms:modified` is updated and confirming the OPF contains no other unauthorized changes.
 
 ## Guarantees & Limitations of `scripts/epub_safe.py`
 

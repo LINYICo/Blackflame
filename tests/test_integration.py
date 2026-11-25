@@ -1,5 +1,6 @@
 """Real integration tests for epublib, BeautifulSoup4, lxml, ebook-convert, EPUBCheck, and Blackflame.zip."""
 
+import hashlib
 import os
 import shutil
 import subprocess
@@ -40,18 +41,27 @@ def _read_opf_summary(epub_path: Path) -> dict[str, str]:
             namespaces={"c": "urn:oasis:names:tc:opendocument:xmlns:container"},
         )[0]
         opf_root = epub_safe.parse_xml(zf.read(opf_member)).getroot()
+    unique_id_ref = opf_root.get("unique-identifier", "")
+    primary_id = ""
+    for ident in opf_root.findall(f".//{{{DC_NS}}}identifier"):
+        if unique_id_ref and ident.get("id") == unique_id_ref:
+            primary_id = (ident.text or "").strip()
+            break
     return {
         "opf_member": opf_member,
         "version": opf_root.get("version", ""),
+        "unique_identifier": unique_id_ref,
         "title": (opf_root.findtext(f".//{{{DC_NS}}}title") or "").strip(),
         "creator": (opf_root.findtext(f".//{{{DC_NS}}}creator") or "").strip(),
         "language": (opf_root.findtext(f".//{{{DC_NS}}}language") or "").strip(),
-        "identifier": (opf_root.findtext(f".//{{{DC_NS}}}identifier") or "").strip(),
+        "identifier": primary_id or (opf_root.findtext(f".//{{{DC_NS}}}identifier") or "").strip(),
+        "date": (opf_root.findtext(f".//{{{DC_NS}}}date") or "").strip(),
+        "rights": (opf_root.findtext(f".//{{{DC_NS}}}rights") or "").strip(),
     }
 
 
 def _make_multichapter_epub2(path: Path) -> None:
-    """Build a valid multi-chapter EPUB 2 fixture with nested NCX, opf:scheme, and cover."""
+    """Build a valid multi-chapter EPUB 2 fixture with nested NCX, fragments, opf:scheme, and cover."""
     ch1 = (
         '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">'
         f'<html xmlns="{epub_safe.XHTML}" xml:lang="zh-CN">'
@@ -62,7 +72,7 @@ def _make_multichapter_epub2(path: Path) -> None:
         '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">'
         f'<html xmlns="{epub_safe.XHTML}" xml:lang="zh-CN">'
         "<head><title>第二章</title></head>"
-        '<body><h1 id="c2">第二章</h1><p>Second chapter original body.</p></body></html>'
+        '<body><h1 id="c2">第二章</h1><h2 id="sec-2-1">第二节</h2><p>Second chapter original body.</p></body></html>'
     )
     with ZipFile(path, "w") as archive:
         archive.writestr("mimetype", epub_safe.MEDIA_TYPE, compress_type=ZIP_STORED)
@@ -80,6 +90,8 @@ def _make_multichapter_epub2(path: Path) -> None:
             "<dc:creator>Test Author</dc:creator>"
             '<dc:identifier id="uid" opf:scheme="UUID">urn:uuid:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee</dc:identifier>'
             "<dc:language>zh-CN</dc:language>"
+            "<dc:date>2020-05-01</dc:date>"
+            "<dc:rights>Copyright 2020 Original Publisher</dc:rights>"
             '<meta name="cover" content="cov"/>'
             "</metadata>"
             "<manifest>"
@@ -94,13 +106,14 @@ def _make_multichapter_epub2(path: Path) -> None:
             "OEBPS/toc.ncx",
             f'<ncx xmlns="{NCX_NS}" version="2005-1">'
             '<head><meta name="dtb:uid" content="urn:uuid:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"/>'
-            '<meta name="dtb:depth" content="2"/><meta name="dtb:totalPageCount" content="0"/>'
+            '<meta name="dtb:depth" content="3"/><meta name="dtb:totalPageCount" content="0"/>'
             '<meta name="dtb:maxPageNumber" content="0"/></head>'
             "<docTitle><text>旧版多章节测试书</text></docTitle>"
             "<navMap>"
             '<navPoint id="np-1" playOrder="1"><navLabel><text>第一章</text></navLabel><content src="ch1.xhtml"/>'
-            '<navPoint id="np-2" playOrder="2"><navLabel><text>第二章</text></navLabel><content src="ch2.xhtml"/></navPoint>'
-            "</navPoint></navMap></ncx>",
+            '<navPoint id="np-2" playOrder="2"><navLabel><text>第二章</text></navLabel><content src="ch2.xhtml#c2"/>'
+            '<navPoint id="np-3" playOrder="3"><navLabel><text>第二节</text></navLabel><content src="ch2.xhtml#sec-2-1"/></navPoint>'
+            "</navPoint></navPoint></navMap></ncx>",
         )
         archive.writestr("OEBPS/ch1.xhtml", ch1)
         archive.writestr("OEBPS/ch2.xhtml", ch2)
@@ -302,23 +315,74 @@ class RealToolIntegrationTests(unittest.TestCase):
                     z_out.writestr("OEBPS/nav.xhtml", nav_bytes)
 
             # Verify Original source -> Migrated baseline
+            with ZipFile(src2) as z_src:
+                src_cover_sha = hashlib.sha256(z_src.read("OEBPS/cover.png")).hexdigest()
+                src_ncx_sha = hashlib.sha256(z_src.read("OEBPS/toc.ncx")).hexdigest()
+
             mig_summary = _read_opf_summary(migrated)
             self.assertEqual(mig_summary["version"], "3.0")
-            self.assertEqual(mig_summary["identifier"], src_summary["identifier"])
-            mig_diff = epub_safe.compare_epubs(src2, migrated, preserve_spine=True, preserve_text=True)
+            for field in ("unique_identifier", "identifier", "creator", "language", "date", "rights"):
+                self.assertEqual(mig_summary[field], src_summary[field])
+            mig_diff = epub_safe.compare_epubs(
+                src2,
+                migrated,
+                expected_changed={"OEBPS/content.opf", "OEBPS/ch1.xhtml", "OEBPS/ch2.xhtml"},
+                expected_added={"OEBPS/nav.xhtml"},
+                expected_removed=set(),
+                preserve_spine=True,
+                preserve_text=True,
+            )
             self.assertEqual(mig_diff["added"], ["OEBPS/nav.xhtml"])
             self.assertEqual(mig_diff["removed"], [])
             with ZipFile(migrated) as zf:
-                self.assertIn("OEBPS/toc.ncx", zf.namelist())
+                self.assertEqual(hashlib.sha256(zf.read("OEBPS/cover.png")).hexdigest(), src_cover_sha)
+                self.assertEqual(hashlib.sha256(zf.read("OEBPS/toc.ncx")).hexdigest(), src_ncx_sha)
                 self.assertEqual(epub_safe.image_dimensions(zf.read("OEBPS/cover.png")), (20, 30))
-                nav_text = zf.read("OEBPS/nav.xhtml").decode("utf-8")
-                self.assertIn('href="ch1.xhtml"', nav_text)
-                self.assertIn('href="ch2.xhtml"', nav_text)
 
-            # Stage 2 -> Stage 3: Surgical OPF metadata edit on migrated baseline
+                # Verify TOC hierarchy and real fragment targets in target XHTML docs.
+                nav_root = epub_safe.parse_xml(zf.read("OEBPS/nav.xhtml")).getroot()
+                toc_nav = nav_root.find(f".//{{{epub_safe.XHTML}}}nav[@{{{epub_ns}}}type='toc']")
+                self.assertIsNotNone(toc_nav)
+                top_lis = toc_nav.findall(f"{{{epub_safe.XHTML}}}ol/{{{epub_safe.XHTML}}}li")
+                self.assertEqual(len(top_lis), 1)
+                self.assertEqual(top_lis[0].find(f"{{{epub_safe.XHTML}}}a").get("href"), "ch1.xhtml")
+                lvl2_lis = top_lis[0].findall(f"{{{epub_safe.XHTML}}}ol/{{{epub_safe.XHTML}}}li")
+                self.assertEqual(len(lvl2_lis), 1)
+                self.assertEqual(lvl2_lis[0].find(f"{{{epub_safe.XHTML}}}a").get("href"), "ch2.xhtml#c2")
+                lvl3_lis = lvl2_lis[0].findall(f"{{{epub_safe.XHTML}}}ol/{{{epub_safe.XHTML}}}li")
+                self.assertEqual(len(lvl3_lis), 1)
+                self.assertEqual(lvl3_lis[0].find(f"{{{epub_safe.XHTML}}}a").get("href"), "ch2.xhtml#sec-2-1")
+                for link in toc_nav.findall(f".//{{{epub_safe.XHTML}}}a"):
+                    href = link.get("href", "")
+                    doc_href, _, frag = href.partition("#")
+                    member = f"OEBPS/{doc_href}"
+                    self.assertIn(member, zf.namelist())
+                    if frag:
+                        target_doc = epub_safe.parse_xml(zf.read(member))
+                        self.assertTrue(
+                            target_doc.xpath(f"//*[@id='{frag}']"),
+                            f"Missing fragment target #{frag} in {member}",
+                        )
+                mig_opf = epub_safe.parse_xml(zf.read("OEBPS/content.opf")).getroot()
+                mig_modified = [
+                    m
+                    for m in mig_opf.findall(f".//{{{epub_safe.OPF}}}meta[@property='dcterms:modified']")
+                    if not m.get("refines")
+                ]
+                self.assertEqual(len(mig_modified), 1)
+                self.assertRegex((mig_modified[0].text or "").strip(), r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+
+            # Stage 2 -> Stage 3: Surgical OPF metadata edit on migrated baseline (updating dcterms:modified)
             with ZipFile(migrated) as zf:
                 opf = epub_safe.parse_xml(zf.read("OEBPS/content.opf"))
             opf.find(f".//{{{DC_NS}}}title").text = "新版核实书名"
+            fin_mod = [
+                m
+                for m in opf.findall(f".//{{{epub_safe.OPF}}}meta[@property='dcterms:modified']")
+                if not m.get("refines")
+            ]
+            self.assertEqual(len(fin_mod), 1)
+            fin_mod[0].text = "2026-11-25T00:00:01Z"
             epub_safe.replace_members(
                 migrated,
                 final_out,
@@ -333,7 +397,22 @@ class RealToolIntegrationTests(unittest.TestCase):
                 preserve_spine=True,
                 preserve_text=True,
             )
-            self.assertEqual(_read_opf_summary(final_out)["title"], "新版核实书名")
+            final_summary = _read_opf_summary(final_out)
+            self.assertEqual(final_summary["version"], "3.0")
+            self.assertEqual(final_summary["title"], "新版核实书名")
+            for field in ("unique_identifier", "identifier", "creator", "language", "date", "rights"):
+                self.assertEqual(final_summary[field], src_summary[field])
+            with ZipFile(final_out) as zf:
+                self.assertEqual(hashlib.sha256(zf.read("OEBPS/cover.png")).hexdigest(), src_cover_sha)
+                self.assertEqual(hashlib.sha256(zf.read("OEBPS/toc.ncx")).hexdigest(), src_ncx_sha)
+                final_opf = epub_safe.parse_xml(zf.read("OEBPS/content.opf")).getroot()
+                final_modified = [
+                    m
+                    for m in final_opf.findall(f".//{{{epub_safe.OPF}}}meta[@property='dcterms:modified']")
+                    if not m.get("refines")
+                ]
+                self.assertEqual(len(final_modified), 1)
+                self.assertEqual((final_modified[0].text or "").strip(), "2026-11-25T00:00:01Z")
             self.assertEqual(epub_safe.sha256_file(src2), src_sha)
 
             if _epubcheck_available():
@@ -342,6 +421,7 @@ class RealToolIntegrationTests(unittest.TestCase):
                 ec_fin = epub_safe.run_epubcheck(final_out, root / "mig-final.json")
                 epub_safe.assert_no_new_diagnostics(ec_src, ec_mig)
                 epub_safe.assert_no_new_diagnostics(ec_mig, ec_fin)
+                self.assertFalse(ec_src.has_errors)
                 self.assertFalse(ec_mig.has_errors)
                 self.assertFalse(ec_fin.has_errors)
 

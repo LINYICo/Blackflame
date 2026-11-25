@@ -32,4 +32,4 @@ A `0` exit code alone never proves content survived cleanly. Verify according to
 - **Integrity & body text**: Non-empty valid output; confirm paragraphs, headings, punctuation, and non-ASCII/CJK text survived without truncation or garbling.
 - **EPUB / DOCX outputs**: Check actual OPF `version` (for EPUB), title, author, language, cover/illustrations, and TOC links.
 - **TXT / lossy outputs**: Report absent images, styling, TOC, and embedded metadata as expected format limitations rather than automatic failure.
-- **EPUB outputs**: Run `epub_safe.run_epubcheck()` using a fresh temporary report path and confirm the validator supports the target EPUB standard ([validation.md](validation.md)).
+- **EPUB outputs only**: Run `epub_safe.run_epubcheck()` on the generated EPUB using a fresh temporary report path and confirm the validator supports the target EPUB standard; never run EPUBCheck on non-EPUB sources or outputs ([validation.md](validation.md)).

@@ -6,7 +6,7 @@ Use this guide for inspecting, verifying, or editing bibliographic metadata and 
 
 - **Verify before writing.** Cross-check title, subtitle, author, translator/editor, publisher, publication date, language, series, and ISBN against the title/copyright page or verified catalog records. Never fabricate unverified fields.
 - **Distinguish print vs. EPUB ISBNs.** Keep the primary `unique-identifier` and EPUB 2 NCX UID stable unless verified wrong; store a print ISBN in `dc:source` when the digital edition has none.
-- **Preserve edition matter.** Retain `dc:rights`, attribution, IDs, attributes, and refinements unless authorized to change them.
+- **Preserve edition matter.** Retain original publication date (`dc:date`), `dc:rights`, attribution, IDs, attributes, and refinements unless authorized to change them. For any actual EPUB 3 modification, update only the single unrefined `<meta property="dcterms:modified">` in UTC (`YYYY-MM-DDThh:mm:ssZ`).
 
 ## Read-Only Inspection (`epublib`)
 

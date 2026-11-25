@@ -12,8 +12,9 @@ Use this guide for proofreading, XHTML/CSS edits, promotional content removal, c
 1. Inspect the passage and surrounding XML (`BeautifulSoup(raw, "xml")` for querying; `epub_safe.parse_xml()` for strict verification).
 2. Confirm exact match counts before replacing.
 3. On paragraphs with inline markup (`<em>`, `<span>`, `<strong>`, `<a>`, footnote links), edit only the target leaf text node (`NavigableString` or `lxml` `.text`/`.tail`)—never overwrite `.string` on a mixed-content element.
-4. **Verify the actual in-chapter text and structural diff.** Member-level SHA-256 checks prove untouched files did not change, **not** that only authorized text changed inside the edited chapter. Confirm XML declarations, namespaces, DOCTYPE, comments, footnotes, attribution, and copyright notices remain intact.
-5. Verify unrelated chapters and spine order with `compare_epubs(..., expected_changed={...}, preserve_spine=True)`.
+4. **Update `dcterms:modified` on EPUB 3 edits.** Whenever an EPUB 3 publication is actually modified (body, CSS, cover, TOC, footnotes, or structure), update the OPF's single unrefined `<meta property="dcterms:modified">` to UTC (`YYYY-MM-DDThh:mm:ssZ`) while preserving `dc:date` and all other OPF metadata. Do not touch or repack the book if no actual change is made.
+5. **Verify the actual in-chapter text, structural, and OPF diffs.** Member-level SHA-256 checks prove untouched files did not change, **not** that only authorized text changed inside the edited chapter. Confirm XML declarations, namespaces, DOCTYPE, comments, footnotes, attribution, copyright notices, and unrelated OPF metadata remain intact.
+6. Verify unrelated chapters and spine order with `compare_epubs(..., expected_changed={edited_member, opf_member}, preserve_spine=True)` (confirming the OPF changed only `dcterms:modified`).
 
 When removing promotional inserts, edit only the promotional span if it shares a paragraph with book text, and remove dangling links or manifest entries.
 
