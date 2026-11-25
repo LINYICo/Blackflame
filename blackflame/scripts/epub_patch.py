@@ -13,6 +13,7 @@ from zipfile import BadZipFile, ZipFile
 
 from lxml import etree
 
+from audit import audit_epub
 from edit_plan import read_replacements, unique_fields
 from publication import (
     LIMIT_TOTAL,
@@ -161,6 +162,10 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     inspect = commands.add_parser("inspect", help="Print package inventory and source SHA-256")
     inspect.add_argument("source", type=Path)
+    audit_cmd = commands.add_parser(
+        "audit", help="Audit manifest, spine, navigation, links, footnotes, covers, and assets"
+    )
+    audit_cmd.add_argument("source", type=Path)
     patch = commands.add_parser("apply", help="Validate and apply a reviewed replacement plan")
     patch.add_argument("source", type=Path)
     patch.add_argument("output", type=Path)
@@ -194,6 +199,8 @@ def main():
                     "Source changed during inspection",
                 )
             print(json.dumps(data, ensure_ascii=False, indent=2))
+        elif args.command == "audit":
+            print(json.dumps(audit_epub(args.source), ensure_ascii=False, indent=2))
         elif args.command == "apply":
             apply(args)
         else:

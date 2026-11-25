@@ -4,11 +4,11 @@ An agent skill for editing existing EPUB books. Inspect the package, review a ta
 
 ## Install
 
-Download [Blackflame.zip](https://github.com/LINYICo/Blackflame/releases/download/v1.4.0/Blackflame.zip) and extract the `blackflame/` folder into your client's skills directory. For Codex, use `~/.agents/skills/`. Start with Python 3.13 or later.
+Download [Blackflame.zip](https://github.com/LINYICo/Blackflame/releases/download/v1.4.1/Blackflame.zip) and extract the `blackflame/` folder into your client's skills directory. For Codex, use `~/.agents/skills/`. Core editing requires Python 3.11+ (`epublib` requires 3.13+ and `ebook-convert` requires 3.12+).
 
-First use detects Homebrew, Python 3.13+, uv, EPUBCheck, and Python libraries on your machine, reusing everything already installed to avoid duplicate setup. Any missing runtime components are installed silently on first run, and monthly maintenance follows recorded ownership. Shared Python environments remain under their existing manager.
+Run `python3 blackflame/scripts/skill.py status` for a read-only check of your local Python, `uv`, EPUBCheck, and libraries. Existing tools are reused directly without duplicate installation. Run `python3 blackflame/scripts/skill.py setup` to prepare missing private Python dependencies (pass `--allow-system-install` only when authorizing system-level installs such as Homebrew or EPUBCheck).
 
-Preferences and the UTC update schedule are stored in `~/.config/blackflame/settings.json`. The skill respects `XDG_CONFIG_HOME` and supports an explicit `BLACKFLAME_HOME`. To change preferences, run `python3 blackflame/scripts/skill.py configure --platform general` with your choices. [Dependency details](blackflame/references/tools.md)
+Preferences and the UTC update schedule are stored in `~/.config/blackflame/settings.json` (with automatic migration from legacy `~/.config/epublib/settings.json`). The skill respects `XDG_CONFIG_HOME` and supports an explicit `BLACKFLAME_HOME`. [Dependency details](blackflame/references/tools.md)
 
 ## Use
 
@@ -18,6 +18,7 @@ From the repository root, inspect a book, apply a reviewed plan, or verify a can
 
 ```sh
 python3 blackflame/scripts/skill.py run inspect book.epub > inventory.json
+python3 blackflame/scripts/skill.py run audit book.epub > audit.json
 python3 blackflame/scripts/skill.py run apply book.epub edited.epub --plan plan.json --report-dir apply-report
 python3 blackflame/scripts/skill.py run verify book.epub edited.epub \
   --expected-changes scope.json --preserve-spine --report-dir verify-report
@@ -30,7 +31,7 @@ The editing guide defines both plan formats and explains how to read a validatio
 Dependencies are managed with [uv](https://docs.astral.sh/uv/) (`pyproject.toml` and `uv.lock`). Sync the environment and run the test suite:
 
 ```sh
-uv sync
+uv sync --all-extras
 uv run python -m unittest discover -s tests -v
 ```
 

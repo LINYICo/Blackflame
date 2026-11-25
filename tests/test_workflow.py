@@ -1,6 +1,7 @@
 """Regression tests for reviewed edits and EPUBCheck validation."""
 
 import json
+import os
 import shutil
 import sys
 import unittest
@@ -10,7 +11,7 @@ from pathlib import Path
 from subprocess import CompletedProcess, run
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
-from zipfile import ZipFile
+from zipfile import BadZipFile, ZipFile
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "blackflame/scripts"
 sys.path.insert(0, str(SCRIPTS))
@@ -55,6 +56,17 @@ class ContainerTests(unittest.TestCase):
                 with ZipFile(stream) as archive, self.assertRaises(ValueError):
                     check_zip(archive, stream)
 
+    def test_duplicate_zip_entries_and_corrupted_archive_rejected(self):
+        stream = BytesIO()
+        with ZipFile(stream, "w") as archive:
+            archive.writestr("mimetype", MEDIA_TYPE)
+            archive.writestr("ch.xhtml", b"1")
+            archive.writestr("ch.xhtml", b"2")
+        with ZipFile(stream) as archive, self.assertRaisesRegex(ValueError, "Duplicate ZIP entry"):
+            check_zip(archive, stream)
+        with self.assertRaises(BadZipFile):
+            ZipFile(BytesIO(b"not a zip archive"))
+
     def test_signed_package_refuses_replacement(self):
         with TemporaryDirectory() as directory:
             plan = Path(directory) / "plan"
@@ -94,7 +106,10 @@ class ReportTests(unittest.TestCase):
                 validate_candidate(before, after, root)
 
 
-@unittest.skipUnless(shutil.which("epubcheck"), "requires EPUBCheck")
+@unittest.skipUnless(
+    os.environ.get("BLACKFLAME_REQUIRE_EPUBCHECK") == "1" or shutil.which("epubcheck"),
+    "requires EPUBCheck",
+)
 class WorkflowTests(unittest.TestCase):
     def test_reviewed_copy_and_exact_scope(self):
         with TemporaryDirectory() as directory:

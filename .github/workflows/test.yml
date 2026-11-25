@@ -7,10 +7,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/ruff-action@v3
+      - uses: astral-sh/ruff-action@v4.1.0
         with:
           args: "check"
-      - uses: astral-sh/ruff-action@v3
+      - uses: astral-sh/ruff-action@v4.1.0
         with:
           args: "format --check"
       - uses: ewhauser/shuck-action@v1
@@ -18,28 +18,52 @@ jobs:
           mode: check
           paths: |
             .github/workflows
+      - uses: astral-sh/setup-uv@v10.3.3
+      - name: Verify uv lockfile
+        run: uv lock --check
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python-version: "3.11"
+          - os: ubuntu-latest
+            python-version: "3.13"
+          - os: macos-15
+            python-version: "3.13"
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v9
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
           enable-cache: true
       - uses: actions/setup-python@v5
         with:
-          python-version-file: "pyproject.toml"
+          python-version: ${{ matrix.python-version }}
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
-      - run: uv sync --locked
+          java-version: "21"
+      - name: Sync dependencies
+        run: uv sync --locked --all-extras --python "${{ matrix.python-version }}"
       - name: Install EPUBCheck 5.4.0
+        shell: bash
         run: |
           cd "$RUNNER_TEMP"
           curl --fail --location --retry 3 -o epubcheck.zip https://github.com/w3c/epubcheck/releases/download/v5.4.0/epubcheck-5.4.0.zip
-          echo "33350c61038e71dfb3d45a76aed04bf5481e6d5500cb780f6e98db8bbd15a28c  epubcheck.zip" | sha256sum --check
+          if command -v sha256sum >/dev/null 2>&1; then
+            echo "33350c61038e71dfb3d45a76aed04bf5481e6d5500cb780f6e98db8bbd15a28c  epubcheck.zip" | sha256sum --check
+          else
+            echo "33350c61038e71dfb3d45a76aed04bf5481e6d5500cb780f6e98db8bbd15a28c  epubcheck.zip" | shasum -a 256 -c
+          fi
           unzip -q epubcheck.zip
           printf '#!/bin/sh\nexec java -jar "%s/epubcheck-5.4.0/epubcheck.jar" "$@"\n' "$RUNNER_TEMP" > epubcheck
           chmod +x epubcheck
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
-      - run: epubcheck --version && uv run python -m unittest discover -s tests -v
+      - name: Run test suite
+        env:
+          BLACKFLAME_REQUIRE_EPUBCHECK: "1"
+        run: |
+          epubcheck --version
+          uv run --no-sync python -m unittest discover -s tests -v
