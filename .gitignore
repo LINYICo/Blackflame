@@ -2,5 +2,6 @@ __pycache__/
 *.py[cod]
 .DS_Store
 *.epub
+.venv/
 .ruff_cache/
 .shuck_cache/

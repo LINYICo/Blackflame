@@ -22,14 +22,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: true
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version-file: "pyproject.toml"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
-      - run: python -m pip install lxml
+      - run: uv sync --locked
       - name: Install EPUBCheck 5.4.0
         run: |
           cd "$RUNNER_TEMP"
@@ -39,4 +42,4 @@ jobs:
           printf '#!/bin/sh\nexec java -jar "%s/epubcheck-5.4.0/epubcheck.jar" "$@"\n' "$RUNNER_TEMP" > epubcheck
           chmod +x epubcheck
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
-      - run: epubcheck --version && python -m unittest discover -s tests -v
+      - run: epubcheck --version && uv run python -m unittest discover -s tests -v

@@ -4,7 +4,7 @@ An agent skill for editing existing EPUB books. Inspect the package, review a ta
 
 ## Install
 
-Download [Blackflame.zip](https://github.com/LINYICo/Blackflame/releases/download/v1.3.0/Blackflame.zip) and extract the `blackflame/` folder into your client's skills directory. For Codex, use `~/.agents/skills/`. Start with your preferred Python 3.11 or later.
+Download [Blackflame.zip](https://github.com/LINYICo/Blackflame/releases/download/v1.3.0/Blackflame.zip) and extract the `blackflame/` folder into your client's skills directory. For Codex, use `~/.agents/skills/`. Start with Python 3.13 or later.
 
 First use inventories the selected interpreter and EPUBCheck. Installed tools are reused. If a needed tool is missing, the skill asks which installation method you use. Monthly maintenance follows recorded ownership and preferences. Shared Python environments remain under their existing manager.
 
@@ -27,7 +27,14 @@ The editing guide defines both plan formats and explains how to read a validatio
 
 ## Development
 
-Run `python3 -m unittest discover -s tests -v`. With EPUBCheck on the path, the suite also builds an EPUB from scratch and exercises all three CLI commands. CI runs this workflow with EPUBCheck 5.4.0.
+Dependencies are managed with [uv](https://docs.astral.sh/uv/) (`pyproject.toml` and `uv.lock`). Sync the environment and run the test suite:
+
+```sh
+uv sync
+uv run python -m unittest discover -s tests -v
+```
+
+With EPUBCheck on the path, the suite also builds an EPUB from scratch and exercises all three CLI commands. CI runs this workflow with EPUBCheck 5.4.0.
 
 Code quality and formatting are checked with [Ruff](https://github.com/astral-sh/ruff) (`ruff.toml`) and [Shuck](https://github.com/ewhauser/shuck) (`shuck.toml`):
 

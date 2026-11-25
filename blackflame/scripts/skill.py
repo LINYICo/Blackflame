@@ -93,7 +93,7 @@ def install_checker(dest):
     return dest / name / "epubcheck.jar"
 
 
-PACKAGES = {"lxml": "lxml", "bs4": "beautifulsoup4", "epublib": "epublib"}
+PACKAGES = {"lxml": "lxml", "bs4": "beautifulsoup4", "epublib": "epublib", "ebook_convert": "ebook-convert"}
 
 
 def brew_cellar():
