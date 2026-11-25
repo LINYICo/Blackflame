@@ -1,26 +1,30 @@
 import json
-from datetime import datetime, timezone
-from pathlib import Path
 import sys
-from tempfile import TemporaryDirectory
 import unittest
+from datetime import UTC, datetime
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "epublib/scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "blackflame/scripts"))
 import skill
 
 
 class MaintenanceTests(unittest.TestCase):
     def test_month_end(self):
         for year, day in [(2027, 28), (2028, 29)]:
-            start = datetime(year, 1, 31, 9, 15, tzinfo=timezone.utc)
+            start = datetime(year, 1, 31, 9, 15, tzinfo=UTC)
             self.assertEqual(skill.next_month(start), start.replace(month=2, day=day))
-        december = datetime(2026, 12, 22, tzinfo=timezone.utc)
+        december = datetime(2026, 12, 22, tzinfo=UTC)
         self.assertEqual(skill.next_month(december), december.replace(year=2027, month=1))
 
     def test_first_use_skip_and_retry(self):
         settings = {"auto_install": False, "platform": "general"}
-        with TemporaryDirectory() as tmp, patch.object(skill, "ROOT", Path(tmp)), patch.object(skill, "refresh") as update:
+        with (
+            TemporaryDirectory() as tmp,
+            patch.object(skill, "ROOT", Path(tmp)),
+            patch.object(skill, "refresh") as update,
+        ):
             skill.maintain(settings, {})
             first = settings["last_updated_at"]
             skill.maintain(settings, {})
@@ -33,7 +37,7 @@ class MaintenanceTests(unittest.TestCase):
             skill.maintain(settings, {})
             self.assertEqual(update.call_count, 3)
             self.assertNotIn("last_update_error", settings)
-            self.assertEqual(json.loads((Path(tmp)/"settings.json").read_text()), settings)
+            self.assertEqual(json.loads((Path(tmp) / "settings.json").read_text()), settings)
 
     def test_python_formula_does_not_own_pip_packages(self):
         with TemporaryDirectory() as tmp:
@@ -41,8 +45,8 @@ class MaintenanceTests(unittest.TestCase):
             for formula in ["python@3.13", "epubcheck"]:
                 keg = cellar / formula / "1.0"
                 keg.mkdir(parents=True)
-                (keg/"INSTALL_RECEIPT.json").touch()
-                owner = skill.formula_owner(keg/"lib/file", cellar)
+                (keg / "INSTALL_RECEIPT.json").touch()
+                owner = skill.formula_owner(keg / "lib/file", cellar)
                 self.assertEqual(owner, None if formula.startswith("python@") else formula)
 
     def test_shared_python_and_unknown_checker_remain_external(self):

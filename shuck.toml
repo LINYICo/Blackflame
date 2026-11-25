@@ -1,0 +1,6 @@
+[check]
+embedded = true
+
+[format]
+indent-style = "space"
+indent-width = 2

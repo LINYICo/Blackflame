@@ -6,10 +6,6 @@ Run `inspect` first to identify the package, navigation documents, and spine. Re
 
 For EPUB 3 package inspection, open the book with `with EPUB(path, generator_tag=False) as book:`. Read `book.metadata`, `book.manifest`, and `book.spine`. The constructor normally adds generator metadata to its model. Passing the flag keeps inspection free of that addition. Use the manifest's navigation property to distinguish the table of contents from chapters. [EPUBLib API](https://epublib.readthedocs.io/en/stable/epublib.html)
 
-## EbookLib
-
-Use `epub.read_epub(path)` for EPUB 2 or EPUB 3. The value of `book.get_metadata("DC", "creator")` is a list of value and attribute pairs. Retain the attributes when distinguishing authors from contributors. EbookLib documents limitations when writing a book it has read. Use the original ZIP member as the source of each replacement. [EbookLib tutorial](https://docs.sourcefabric.org/projects/ebooklib/en/latest/tutorial.html)
-
 ## Beautiful Soup
 
 Use `BeautifulSoup(chapter_bytes, "xml")` to find candidate passages or links. For example, `soup.select("a[href]")` returns links to inspect in context. Beautiful Soup delegates parsing to the selected backend, and HTML parsers can repair the same input differently. Confirm each match against the original XHTML with strict XML parsing. [Beautiful Soup parser differences](https://www.crummy.com/software/BeautifulSoup/bs4/doc/#differences-between-parsers)
@@ -20,15 +16,15 @@ Run the same executable on the source and candidate. The CLI passes `--maxOfEach
 
 ## Editing dependencies
 
-The bundled writer reads original ZIP members, uses strict XML parsing with external DTD loading and entity expansion disabled, and compares SHA-256 digests of uncompressed member bytes. EPUBLib, EbookLib, and Beautiful Soup are optional inspection tools. [lxml parser options](https://lxml.de/parsing.html) · [Python zipfile](https://docs.python.org/3/library/zipfile.html)
+The bundled writer reads original ZIP members, uses strict XML parsing with external DTD loading and entity expansion disabled, and compares SHA-256 digests of uncompressed member bytes. EPUBLib and Beautiful Soup are optional inspection tools. [lxml parser options](https://lxml.de/parsing.html) · [Python zipfile](https://docs.python.org/3/library/zipfile.html)
 
 ## Managed updates
 
-Run `python3 scripts/skill.py status` with the interpreter intended for this book. The inventory covers lxml, EPUBLib, EbookLib, Beautiful Soup, and EPUBCheck. An installed Python distribution supplies its version and installer record. EPUBLib requires Python 3.13 or later. [EPUBLib package](https://pypi.org/project/epublib/)
+Run `python3 scripts/skill.py status` with the interpreter intended for this book. The inventory covers lxml, EPUBLib, Beautiful Soup, and EPUBCheck. An installed Python distribution supplies its version and installer record. EPUBLib requires Python 3.13 or later. [EPUBLib package](https://pypi.org/project/epublib/)
 
 - **Homebrew.** The launcher matches the resolved installation to a keg in the active Cellar and checks its receipt. Monthly maintenance upgrades identified formulas individually and respects pins. A brewed Python interpreter can contain packages installed separately with pip. For a missing library distributed by the user’s tap, specify `--python-manager homebrew --package PACKAGE --brew-formula PACKAGE=FORMULA`. The launcher verifies that the selected interpreter can see that keg. Choose `--install-epubcheck --checker-manager homebrew` to install missing EPUBCheck with the user's brew. [Homebrew commands](https://docs.brew.sh/Manpage)
 - **uv and Python/pip.** Choose `--python-manager uv` or `pip` for missing Python libraries. The selected installer builds a skill-local virtual environment from the selected interpreter and exposes its existing site packages for reuse. Monthly updates rebuild the local environment. A failed build leaves the previous environment available. For existing packages in a user-designated standalone venv, `--dedicated-venv yes` enables updates via each distribution's recorded pip or uv installer. Project, system, and shared environments stay under their owner's update policy. Run the launcher from the interpreter that owns a locked project. [uv environments](https://docs.astral.sh/uv/concepts/projects/sync/) · [Externally managed Python environments](https://packaging.python.org/en/latest/specifications/externally-managed-environments/)
-- **Official EPUBCheck.** Select `--install-epubcheck --checker-manager official` to install the official archive using an existing Java runtime. The launcher verifies its published SHA-256 and checks the JAR before recording it. Existing external executables and user-specified JARs are reused. Set `EPUBLIB_CHECKER_JAR` and optionally `EPUBLIB_JAVA` for an external JAR. [EPUBCheck releases](https://github.com/w3c/epubcheck/releases)
+- **Official EPUBCheck.** Select `--install-epubcheck --checker-manager official` to install the official archive using an existing Java runtime. The launcher verifies its published SHA-256 and checks the JAR before recording it. Existing external executables and user-specified JARs are reused. Set `BLACKFLAME_CHECKER_JAR` and optionally `BLACKFLAME_JAVA` for an external JAR. [EPUBCheck releases](https://github.com/w3c/epubcheck/releases)
 - **Other managers.** Use the interpreter or validator supplied by Conda, a system package manager, or a manual installation. Unknown ownership remains externally managed. Compatible private runtimes from 1.2.0 remain available as a fallback. First use asks for an installation method only if a needed tool is missing.
 
 Installation consent applies to the named tools in the current configure command. Monthly maintenance updates tools already managed by the skill or their identified owner.

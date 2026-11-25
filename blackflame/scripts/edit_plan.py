@@ -1,10 +1,11 @@
 """Check source-bound replacement plans against XML structure and text."""
-from collections import Counter
+
 import json
+from collections import Counter
 
 from lxml import etree
-from publication import DC, LIMIT_XML, OPF, XHTML, parse_xml, require, xml_member
 
+from publication import DC, LIMIT_XML, OPF, XHTML, parse_xml, require, xml_member
 
 EDITABLE_METADATA = {
     f"{{{DC}}}{field}"
@@ -17,8 +18,7 @@ def compare_xml(old, new, member, scope_error):
     # the stricter XML serialization, keeping entity references intact.
     has_entities = any(next(tree.getroot().iter(etree.Entity), None) is not None for tree in (old, new))
     method = "xml" if has_entities else "c14n"
-    require(etree.tostring(old, method=method) == etree.tostring(new, method=method),
-            f"{scope_error}: {member}")
+    require(etree.tostring(old, method=method) == etree.tostring(new, method=method), f"{scope_error}: {member}")
     # Canonical XML omits the document type declaration and its internal subset.
     if old.docinfo.doctype:
         for tree in (old, new):
@@ -29,8 +29,9 @@ def compare_xml(old, new, member, scope_error):
 def check_edit(member, before, after, is_package):
     old, new = parse_xml(before), parse_xml(after)
     for field in ("doctype", "encoding", "standalone", "xml_version"):
-        require(getattr(old.docinfo, field) == getattr(new.docinfo, field),
-                f"XML declaration or doctype changed: {member}")
+        require(
+            getattr(old.docinfo, field) == getattr(new.docinfo, field), f"XML declaration or doctype changed: {member}"
+        )
     if is_package:
         modified = "meta[@property='dcterms:modified' and not(@refines)]"
         for tree in (old, new):
@@ -47,9 +48,7 @@ def check_edit(member, before, after, is_package):
     bodies = [tree.getroot().findall(f"{{{XHTML}}}body") for tree in (old, new)]
     require(all(len(matches) == 1 for matches in bodies), f"Expected one XHTML body: {member}")
     anchor_xpath = "//@id | //@xml:id | //x:a/@name"
-    old_anchors, new_anchors = (
-        Counter(tree.xpath(anchor_xpath, namespaces={"x": XHTML})) for tree in (old, new)
-    )
+    old_anchors, new_anchors = (Counter(tree.xpath(anchor_xpath, namespaces={"x": XHTML})) for tree in (old, new))
     require(not (old_anchors - new_anchors), f"Existing anchor removed: {member}")
     for (body,) in bodies:
         body.text = None
@@ -64,11 +63,15 @@ def check_text_edits(member, before, after, edits):
     expected = parse_xml(before)
     growth_budget = LIMIT_XML
     for edit in edits:
-        require(isinstance(edit, dict) and edit.keys() == {"old", "new", "count"},
-                f"Expected old, new and count in {member}")
+        require(
+            isinstance(edit, dict) and edit.keys() == {"old", "new", "count"},
+            f"Expected old, new and count in {member}",
+        )
         old, new, count = edit["old"], edit["new"], edit["count"]
-        require(isinstance(old, str) and old and isinstance(new, str) and new != old
-                and type(count) is int and count > 0, f"Invalid text substitution in {member}")
+        require(
+            isinstance(old, str) and old and isinstance(new, str) and new != old and type(count) is int and count > 0,
+            f"Invalid text substitution in {member}",
+        )
         matches = 0
         for value in expected.xpath("/x:html/x:body//text()", namespaces={"x": XHTML}):
             occurrences = value.count(old)
@@ -99,13 +102,16 @@ def read_replacements(archive, book, plan_path, digest):
     package = book["packages"][0]
     require(package["version"] in {"2.0", "3.0"}, "Editing supports EPUB 2.0 and 3.0 packages")
     documents = {
-        item["member"] for item in package["manifest"]
+        item["member"]
+        for item in package["manifest"]
         if item["member"] is not None and item["media_type"] == "application/xhtml+xml"
     }
     documents -= {item["member"] for item in package["manifest"] if "nav" in item["properties"]}
     text_edits = plan.get("text_edits", {})
-    require(isinstance(text_edits, dict) and text_edits.keys() <= (documents & proposed.keys()),
-            "Text edits must name replacement XHTML documents")
+    require(
+        isinstance(text_edits, dict) and text_edits.keys() <= (documents & proposed.keys()),
+        "Text edits must name replacement XHTML documents",
+    )
     allowed = documents | {package["member"]}
     replacements = {}
     for member, file in proposed.items():

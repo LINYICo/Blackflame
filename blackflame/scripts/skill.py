@@ -1,26 +1,27 @@
-"""First-use preferences and monthly runtime maintenance for the EpubLib skill."""
+"""First-use preferences and monthly runtime maintenance for the Blackflame skill."""
 
 import argparse
 import calendar
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from hashlib import file_digest
 from importlib import metadata
 from importlib.machinery import PathFinder
 from importlib.util import find_spec
-import json
-import os
-import re
 from pathlib import Path
-import shutil
-import subprocess
-import sys
 from tempfile import TemporaryDirectory, mkdtemp
 from urllib.request import urlopen
 from zipfile import ZipFile
 
-
-ROOT = Path(os.environ.get("EPUBLIB_HOME", Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "epublib")).resolve()
+ROOT = Path(
+    os.environ.get("BLACKFLAME_HOME", Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "blackflame")
+).resolve()
 CLI = Path(__file__).with_name("epub_patch.py")
 
 
@@ -35,10 +36,12 @@ def settings_lock():
     with (ROOT / "settings.lock").open("a+b") as lock:
         if os.name == "nt":
             import msvcrt
+
             lock.seek(0)
             msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
         else:
             import fcntl
+
             fcntl.flock(lock, fcntl.LOCK_EX)
         yield
 
@@ -90,7 +93,7 @@ def install_checker(dest):
     return dest / name / "epubcheck.jar"
 
 
-PACKAGES = {"lxml": "lxml", "ebooklib": "EbookLib", "bs4": "beautifulsoup4", "epublib": "epublib"}
+PACKAGES = {"lxml": "lxml", "bs4": "beautifulsoup4", "epublib": "epublib"}
 
 
 def brew_cellar():
@@ -116,8 +119,11 @@ def formula_owner(path, cellar):
 def legacy_library(settings):
     runtime = settings.get("runtime", {})
     name = runtime.get("directory", "")
-    if (Path(name).name == name and name.startswith("runtime-")
-            and runtime.get("python_abi") == sys.implementation.cache_tag):
+    if (
+        Path(name).name == name
+        and name.startswith("runtime-")
+        and runtime.get("python_abi") == sys.implementation.cache_tag
+    ):
         return ROOT / name / "python"
     return None
 
@@ -135,23 +141,27 @@ def discover(settings):
         if spec and spec.origin:
             manager = (dist.read_text("INSTALLER") or "").strip() or "external"
             formula = formula_owner(spec.origin, cellar)
-            tools[package] = dict(owner="homebrew" if formula else manager, formula=formula,
-                                  version=dist.version, path=spec.origin)
+            tools[package] = dict(
+                owner="homebrew" if formula else manager, formula=formula, version=dist.version, path=spec.origin
+            )
         elif legacy and PathFinder.find_spec(module, [str(legacy)]):
             tools[package] = dict(owner="legacy", path=str(legacy))
         else:
-            tools[package] = dict(owner="unsupported" if module == "epublib" and sys.version_info < (3, 13) else "missing")
+            tools[package] = dict(
+                owner="unsupported" if module == "epublib" and sys.version_info < (3, 13) else "missing"
+            )
     exe = shutil.which("epubcheck")
-    jar = os.environ.get("EPUBLIB_CHECKER_JAR")
+    jar = os.environ.get("BLACKFLAME_CHECKER_JAR")
     managed = settings.get("checker", {}) or settings.get("runtime", {})
     if jar and Path(jar).is_file():
-        checker = dict(owner="external-jar", jar=jar, java=os.environ.get("EPUBLIB_JAVA", "java"))
+        checker = dict(owner="external-jar", jar=jar, java=os.environ.get("BLACKFLAME_JAVA", "java"))
     elif exe:
         formula = formula_owner(exe, cellar)
         checker = dict(owner="homebrew" if formula else "external", path=exe, formula=formula)
     elif managed.get("jar") and Path(managed["jar"]).is_file():
-        checker = dict(owner="official" if settings.get("checker") else "legacy",
-                       jar=managed["jar"], java=managed["java"])
+        checker = dict(
+            owner="official" if settings.get("checker") else "legacy", jar=managed["jar"], java=managed["java"]
+        )
     else:
         checker = dict(owner="missing")
     tools["EPUBCheck"] = checker
@@ -165,9 +175,13 @@ def env_python(directory):
 def environment(settings):
     active = settings.get("environment", {})
     name = active.get("directory", "")
-    if (Path(name).name == name and name.startswith("env-")
-            and active.get("interpreter") == sys.executable and active.get("abi") == sys.implementation.cache_tag
-            and env_python(ROOT / name).is_file()):
+    if (
+        Path(name).name == name
+        and name.startswith("env-")
+        and active.get("interpreter") == sys.executable
+        and active.get("abi") == sys.implementation.cache_tag
+        and env_python(ROOT / name).is_file()
+    ):
         return env_python(ROOT / name)
     return Path(sys.executable)
 
@@ -180,19 +194,34 @@ def make_environment(settings, packages, dest):
         install = ["uv", "pip", "install", "--python", str(python)]
     else:
         run_quietly([sys.executable, "-m", "venv", str(dest)])
-        install = [str(python), "-m", "pip", "--disable-pip-version-check", "--no-input", "install",
-                   "--prefix", str(dest)]
+        install = [
+            str(python),
+            "-m",
+            "pip",
+            "--disable-pip-version-check",
+            "--no-input",
+            "install",
+            "--prefix",
+            str(dest),
+        ]
     # Expose existing distributions read-only to the resolver and to the skill.
     paths = [p for p in sys.path if p and Path(p).name in {"site-packages", "dist-packages"}]
     if legacy := legacy_library(settings):
         paths.append(str(legacy))
-    target = subprocess.check_output([str(python), "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"], text=True).strip()
-    (Path(target) / "epublib-host.pth").write_text("\n".join(paths) + "\n", encoding="utf-8")
+    target = subprocess.check_output(
+        [str(python), "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"], text=True
+    ).strip()
+    (Path(target) / "blackflame-host.pth").write_text("\n".join(paths) + "\n", encoding="utf-8")
     run_quietly([*install, "--upgrade", *packages])
     modules = [module for module, package in PACKAGES.items() if package in packages]
     run_quietly([str(python), "-c", "import " + ", ".join(modules)])
-    return dict(directory=dest.name, interpreter=sys.executable, abi=sys.implementation.cache_tag,
-                manager=method, packages=packages)
+    return dict(
+        directory=dest.name,
+        interpreter=sys.executable,
+        abi=sys.implementation.cache_tag,
+        manager=method,
+        packages=packages,
+    )
 
 
 def dedicated_venv():
@@ -209,12 +238,27 @@ def update_dedicated(settings, tools):
     if not dedicated_venv():
         raise ValueError("The selected interpreter is no longer a standalone virtual environment")
     for manager in ("pip", "uv"):
-        owned = [p for p in PACKAGES.values() if tools[p]["owner"] == manager
-                 and Path(tools[p]["path"]).resolve().is_relative_to(Path(sys.prefix).resolve())]
+        owned = [
+            p
+            for p in PACKAGES.values()
+            if tools[p]["owner"] == manager
+            and Path(tools[p]["path"]).resolve().is_relative_to(Path(sys.prefix).resolve())
+        ]
         if owned:
-            command = ([sys.executable, "-m", "pip", "--disable-pip-version-check", "--no-input", "install",
-                        "--prefix", sys.prefix]
-                       if manager == "pip" else ["uv", "pip", "install", "--python", sys.executable])
+            command = (
+                [
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "--disable-pip-version-check",
+                    "--no-input",
+                    "install",
+                    "--prefix",
+                    sys.prefix,
+                ]
+                if manager == "pip"
+                else ["uv", "pip", "install", "--python", sys.executable]
+            )
             run_quietly([*command, "--upgrade", *owned])
 
 
@@ -228,8 +272,12 @@ def refresh(settings, tools, approved=(), install_checker_now=False):
             if formula not in pinned:
                 run_quietly(["brew", "upgrade", "--formula", formula])
     active = settings.get("environment", {})
-    missing = [p for p in PACKAGES.values() if tools[p]["owner"] == "missing"
-               or (tools[p]["owner"] == "legacy" and settings.get("python_manager") in ("pip", "uv"))]
+    missing = [
+        p
+        for p in PACKAGES.values()
+        if tools[p]["owner"] == "missing"
+        or (tools[p]["owner"] == "legacy" and settings.get("python_manager") in ("pip", "uv"))
+    ]
     packages = [p for p in missing if p in approved or p in active.get("packages", [])]
     if settings.get("python_manager") == "homebrew":
         mappings = settings.get("brew_formulas", {})
@@ -248,8 +296,9 @@ def refresh(settings, tools, approved=(), install_checker_now=False):
         run_quietly(["brew", "install", "--formula", "epubcheck"])
         if not shutil.which("epubcheck"):
             raise RuntimeError("Homebrew installed EPUBCheck but it is unavailable on PATH")
-    elif ((checker["owner"] in ("official", "legacy") and method == "official") or
-          (checker["owner"] == "missing" and install_checker_now and method == "official")):
+    elif (checker["owner"] in ("official", "legacy") and method == "official") or (
+        checker["owner"] == "missing" and install_checker_now and method == "official"
+    ):
         java = java_executable()
         if not java:
             raise RuntimeError("Official EPUBCheck requires an existing Java runtime")
@@ -274,9 +323,14 @@ def refresh(settings, tools, approved=(), install_checker_now=False):
 
 
 def maintain(settings, tools, approved=(), install_checker_now=False):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     runtime_ok = not settings.get("environment") or environment(settings) != Path(sys.executable)
-    if not (approved or install_checker_now) and runtime_ok and settings.get("next_update_at") and now < datetime.fromisoformat(settings["next_update_at"]):
+    if (
+        not (approved or install_checker_now)
+        and runtime_ok
+        and settings.get("next_update_at")
+        and now < datetime.fromisoformat(settings["next_update_at"])
+    ):
         return
     old = environment(settings)
     try:
@@ -285,7 +339,7 @@ def maintain(settings, tools, approved=(), install_checker_now=False):
         settings["last_update_error"] = str(error)
         save(settings)
         return
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     settings.update(last_updated_at=now.isoformat(), next_update_at=next_month(now).isoformat())
     settings.pop("last_update_error", None)
     save(settings)
@@ -321,7 +375,9 @@ def main():
                 formulas = dict(settings.get("brew_formulas", {}))
                 for mapping in args.brew_formula:
                     package, _, formula = mapping.partition("=")
-                    if package not in PACKAGES.values() or not re.fullmatch(r"[a-z0-9][a-z0-9@+._-]*(/[a-z0-9][a-z0-9@+._-]*){0,2}", formula):
+                    if package not in PACKAGES.values() or not re.fullmatch(
+                        r"[a-z0-9][a-z0-9@+._-]*(/[a-z0-9][a-z0-9@+._-]*){0,2}", formula
+                    ):
                         parser.error("Expected --brew-formula PACKAGE=FORMULA")
                     formulas[package] = formula
                 updates["brew_formulas"] = formulas
@@ -356,9 +412,19 @@ def main():
                 for package in active["packages"]:
                     if tools[package]["owner"] == "missing":
                         tools[package] = dict(owner=active["manager"], path=str(environment(settings)))
-            print(json.dumps(dict(first_use=not settings, interpreter=sys.executable, platform=settings.get("platform"),
-                                  missing=[p for p, v in tools.items() if v["owner"] == "missing"],
-                                  tools=tools, last_update_error=settings.get("last_update_error")), ensure_ascii=False))
+            print(
+                json.dumps(
+                    dict(
+                        first_use=not settings,
+                        interpreter=sys.executable,
+                        platform=settings.get("platform"),
+                        missing=[p for p, v in tools.items() if v["owner"] == "missing"],
+                        tools=tools,
+                        last_update_error=settings.get("last_update_error"),
+                    ),
+                    ensure_ascii=False,
+                )
+            )
             return 0
         if not settings:
             parser.exit(2, "First use: run status and configure reader preferences.\n")
@@ -374,7 +440,7 @@ def main():
             env["PYTHONPATH"] = os.pathsep.join(filter(None, [env.get("PYTHONPATH"), *paths, str(legacy)]))
         checker = tools["EPUBCheck"]
         if checker.get("jar"):
-            env.update(EPUBLIB_CHECKER_JAR=checker["jar"], EPUBLIB_JAVA=checker["java"])
+            env.update(BLACKFLAME_CHECKER_JAR=checker["jar"], BLACKFLAME_JAVA=checker["java"])
         cmd = [str(python)] + ([str(CLI)] if args.command == "run" else []) + sys.argv[2:]
         return subprocess.run(cmd, env=env).returncode
 
@@ -383,4 +449,4 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except (RuntimeError, OSError, ValueError, subprocess.SubprocessError, StopIteration, KeyError) as exc:
-        sys.exit(f"epublib: dependency setup failed: {exc}")
+        sys.exit(f"blackflame: dependency setup failed: {exc}")

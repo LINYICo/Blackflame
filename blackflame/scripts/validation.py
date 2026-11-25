@@ -1,10 +1,11 @@
 """Run EPUBCheck and compare complete diagnostic occurrences."""
-from collections import Counter
+
 import json
 import os
-from pathlib import Path
 import posixpath
 import subprocess
+from collections import Counter
+from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import NamedTuple
 from urllib.parse import unquote
@@ -26,19 +27,22 @@ def run_epubcheck(command, book, report):
     with TemporaryDirectory(dir=report.parent) as directory:
         fresh = Path(directory) / "result.json"
         executable = [command]
-        if command == "epubcheck" and os.environ.get("EPUBLIB_CHECKER_JAR"):
-            executable = [os.environ["EPUBLIB_JAVA"], "-jar", os.environ["EPUBLIB_CHECKER_JAR"]]
+        if command == "epubcheck" and os.environ.get("BLACKFLAME_CHECKER_JAR"):
+            executable = [os.environ["BLACKFLAME_JAVA"], "-jar", os.environ["BLACKFLAME_CHECKER_JAR"]]
         run = subprocess.run(
             [*executable, "--maxOfEachMessage", "unlimited", "--json", str(fresh), str(book)],
-            capture_output=True, timeout=180,
+            capture_output=True,
+            timeout=180,
         )
         log = report.with_suffix(".log")
         log.write_bytes(run.stdout + run.stderr)
         require(run.returncode in {0, 1} and fresh.is_file(), f"EPUBCheck did not complete, see {log}")
         data = json.loads(fresh.read_text(encoding="utf-8"))
         checker = data["checker"]
-        require(Path(checker["path"]).resolve() == book and checker["checkerVersion"],
-                f"Unexpected EPUBCheck identity for {book}: {checker['path']!r}, version {checker['checkerVersion']!r}")
+        require(
+            Path(checker["path"]).resolve() == book and checker["checkerVersion"],
+            f"Unexpected EPUBCheck identity for {book}: {checker['path']!r}, version {checker['checkerVersion']!r}",
+        )
         fresh.replace(report)
     diagnostic_keys = {"FATAL": "nFatal", "ERROR": "nError", "WARNING": "nWarning"}
     groups = Counter()

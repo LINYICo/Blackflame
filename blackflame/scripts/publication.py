@@ -1,16 +1,16 @@
 """Read EPUB containers, inventory package documents and hash archive members."""
-from copy import copy
-from hashlib import file_digest, sha256
-from io import BytesIO
+
 import posixpath
 import re
 import stat
 import struct
+from copy import copy
+from hashlib import file_digest, sha256
+from io import BytesIO
 from urllib.parse import unquote, urlsplit
 from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile
 
 from lxml import etree
-
 
 CONTAINER = "META-INF/container.xml"
 MEDIA_TYPE = b"application/epub+zip"
@@ -36,17 +36,20 @@ def sha_file(path):
 
 def parse_xml(data):
     parser = etree.XMLParser(
-        no_network=True, load_dtd=False, resolve_entities=False,
-        strip_cdata=False, recover=False, huge_tree=False,
+        no_network=True,
+        load_dtd=False,
+        resolve_entities=False,
+        strip_cdata=False,
+        recover=False,
+        huge_tree=False,
     )
     return etree.parse(BytesIO(data), parser)
 
 
 def safe_member(name):
     parts = name.removesuffix("/").split("/")
-    return (
-        all(part and part not in {".", ".."} for part in parts)
-        and not any(char in name for char in ("\\", "\0", ":"))
+    return all(part and part not in {".", ".."} for part in parts) and not any(
+        char in name for char in ("\\", "\0", ":")
     )
 
 
@@ -60,15 +63,22 @@ def check_zip(archive, stream):
     require(0 < len(infos) <= 50_000, "ZIP entry count outside supported limits")
     require(infos[0].filename == "mimetype", "mimetype must be the first ZIP entry")
     mime = infos[0]
-    require(mime.header_offset == 0 and mime.compress_type == ZIP_STORED
-            and not mime.extra and mime.file_size == len(MEDIA_TYPE), "Invalid mimetype ZIP entry")
+    require(
+        mime.header_offset == 0
+        and mime.compress_type == ZIP_STORED
+        and not mime.extra
+        and mime.file_size == len(MEDIA_TYPE),
+        "Invalid mimetype ZIP entry",
+    )
     stream.seek(0)
     header = stream.read(30)
     require(len(header) == 30 and header[:4] == b"PK\x03\x04", "Invalid mimetype local ZIP header")
     flags, method = struct.unpack_from("<HH", header, 6)
     extra_size = struct.unpack_from("<H", header, 28)[0]
-    require(not (flags & 1) and method == ZIP_STORED and extra_size == 0,
-            "Invalid mimetype local ZIP flags, compression or extra field")
+    require(
+        not (flags & 1) and method == ZIP_STORED and extra_size == 0,
+        "Invalid mimetype local ZIP flags, compression or extra field",
+    )
     names = set()
     total_size = 0
     for info in infos:
@@ -114,7 +124,8 @@ def inventory(archive, stream):
         manifest = root.findall(f"{{{OPF}}}manifest/{{{OPF}}}item")
         items = [
             {
-                "id": item.get("id"), "href": item.get("href"),
+                "id": item.get("id"),
+                "href": item.get("href"),
                 "member": local_href(package, item.get("href", "")),
                 "media_type": item.get("media-type"),
                 "properties": item.get("properties", "").split(),
@@ -130,34 +141,44 @@ def inventory(archive, stream):
         primary_id = root.get("unique-identifier")
         primary_identifier = root.xpath(
             "opf:metadata/dc:identifier[@id=$primary_id]/text()",
-            namespaces=namespaces, primary_id=primary_id or "",
+            namespaces=namespaces,
+            primary_id=primary_id or "",
         )
         legacy_covers = set(root.xpath("opf:metadata/opf:meta[@name='cover']/@content", namespaces=namespaces))
         spine = root.find(f"{{{OPF}}}spine")
         itemrefs = [] if spine is None else spine.findall(f"{{{OPF}}}itemref")
         spine_items = [
             {
-                "idref": ref.get("idref"), "member": members.get(ref.get("idref")),
+                "idref": ref.get("idref"),
+                "member": members.get(ref.get("idref")),
                 "linear": ref.get("linear", "yes"),
             }
             for ref in itemrefs
         ]
         ncx_ids = root.xpath("opf:spine/@toc", namespaces=namespaces)
-        packages.append({
-            "member": package, "version": root.get("version"),
-            "titles": metadata["title"], "metadata": metadata,
-            "primary_identifier": primary_identifier[0] if len(primary_identifier) == 1 else None,
-            "manifest": items,
-            "spine": [item["idref"] for item in spine_items if item["idref"] is not None],
-            "spine_items": spine_items,
-            "page_progression_direction": spine.get("page-progression-direction", "default") if spine is not None else None,
-            "ncx_id": ncx_ids, "ncx_member": members.get(ncx_ids[0]) if ncx_ids else None,
-            "nav_members": [item["member"] for item in items if item["member"] and "nav" in item["properties"]],
-            "cover_members": [
-                item["member"] for item in items
-                if item["member"] and ("cover-image" in item["properties"] or item["id"] in legacy_covers)
-            ],
-        })
+        packages.append(
+            {
+                "member": package,
+                "version": root.get("version"),
+                "titles": metadata["title"],
+                "metadata": metadata,
+                "primary_identifier": primary_identifier[0] if len(primary_identifier) == 1 else None,
+                "manifest": items,
+                "spine": [item["idref"] for item in spine_items if item["idref"] is not None],
+                "spine_items": spine_items,
+                "page_progression_direction": spine.get("page-progression-direction", "default")
+                if spine is not None
+                else None,
+                "ncx_id": ncx_ids,
+                "ncx_member": members.get(ncx_ids[0]) if ncx_ids else None,
+                "nav_members": [item["member"] for item in items if item["member"] and "nav" in item["properties"]],
+                "cover_members": [
+                    item["member"]
+                    for item in items
+                    if item["member"] and ("cover-image" in item["properties"] or item["id"] in legacy_covers)
+                ],
+            }
+        )
     return {"entry_count": len(names), "protection": sorted(PROTECTION & names), "packages": packages}
 
 
@@ -193,10 +214,14 @@ def repack(archive, candidate, replacements):
             "ZIP entry order, names or compression methods changed",
         )
         after = archive_hashes(output)
-    require({name for name in before if before[name] != after[name]} == replacements.keys(),
-            "Archive changes differ from approved plan")
-    require(all(after[name] == sha256(data).hexdigest() for name, data in replacements.items()),
-            "Output differs from approved replacement")
+    require(
+        {name for name in before if before[name] != after[name]} == replacements.keys(),
+        "Archive changes differ from approved plan",
+    )
+    require(
+        all(after[name] == sha256(data).hexdigest() for name, data in replacements.items()),
+        "Output differs from approved replacement",
+    )
     return before, after
 
 
@@ -217,8 +242,7 @@ def reading_text_hashes(book, archive):
     """Hash body text of spine XHTML documents, excluding EPUB 3 navigation."""
     hashes = {}
     for package in book["packages"]:
-        documents = {item["member"] for item in package["manifest"]
-                     if item["media_type"] == "application/xhtml+xml"}
+        documents = {item["member"] for item in package["manifest"] if item["media_type"] == "application/xhtml+xml"}
         for entry in package["spine_items"]:
             member = entry["member"]
             if member not in documents or member in package["nav_members"] or member in hashes:

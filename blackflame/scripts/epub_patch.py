@@ -2,12 +2,12 @@
 """Inspect, verify, or apply a reviewed replacement plan to an EPUB."""
 
 import argparse
-from hashlib import file_digest
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
+from hashlib import file_digest
+from pathlib import Path
 from tempfile import TemporaryDirectory
 from zipfile import BadZipFile, ZipFile
 
@@ -15,8 +15,15 @@ from lxml import etree
 
 from edit_plan import read_replacements, unique_fields
 from publication import (
-    LIMIT_TOTAL, archive_hashes, check_zip, inventory, reading_text_hashes, repack, require,
-    sha_file, spine_signature,
+    LIMIT_TOTAL,
+    archive_hashes,
+    check_zip,
+    inventory,
+    reading_text_hashes,
+    repack,
+    require,
+    sha_file,
+    spine_signature,
 )
 from validation import run_epubcheck, validate_candidate
 
@@ -60,8 +67,10 @@ def verify(args):
     changed = sorted(name for name in shared if source_members[name] != candidate_members[name])
     before = run_epubcheck(args.epubcheck, args.source, reports / "epubcheck-before.json")
     after = run_epubcheck(args.epubcheck, args.candidate, reports / "epubcheck-after.json")
-    require(file_state(args.source.stat()) == source_state and file_state(args.candidate.stat()) == candidate_state,
-            "Source or candidate changed during verification")
+    require(
+        file_state(args.source.stat()) == source_state and file_state(args.candidate.stat()) == candidate_state,
+        "Source or candidate changed during verification",
+    )
     comparison = {
         "source_sha256": source_hash,
         "candidate_sha256": candidate_hash,
@@ -85,12 +94,20 @@ def verify(args):
     require(comparison.get("spine_unchanged", True), f"Reading order or page progression changed, see {reports}")
     if args.expected_changes:
         expected = json.loads(args.expected_changes.read_text(encoding="utf-8"), object_pairs_hook=unique_fields)
-        require(isinstance(expected, dict) and expected.keys() == {"source_sha256", "added", "removed", "changed"}
-                and expected["source_sha256"] == source_hash, "Expected changes must identify the source and all three lists")
+        require(
+            isinstance(expected, dict)
+            and expected.keys() == {"source_sha256", "added", "removed", "changed"}
+            and expected["source_sha256"] == source_hash,
+            "Expected changes must identify the source and all three lists",
+        )
         for key in ("added", "removed", "changed"):
             names = expected[key]
-            require(isinstance(names, list) and all(isinstance(name, str) for name in names)
-                    and sorted(names) == comparison[key], f"Unexpected {key} members, see {reports}")
+            require(
+                isinstance(names, list)
+                and all(isinstance(name, str) for name in names)
+                and sorted(names) == comparison[key],
+                f"Unexpected {key} members, see {reports}",
+            )
     validate_candidate(before, after, reports)
     require(not after.has_errors or args.allow_existing_errors, f"Existing EPUBCheck errors remain, see {reports}")
     print(reports / "comparison.json")
@@ -102,7 +119,7 @@ def apply(args):
     require(args.source.is_file(), "Source must be a regular file")
     require(args.source.stat().st_size <= LIMIT_TOTAL, "Source archive exceeds size limit")
     reports = args.report_dir.absolute()
-    with TemporaryDirectory(prefix=".epublib-", dir=args.output.parent) as directory:
+    with TemporaryDirectory(prefix=".blackflame-", dir=args.output.parent) as directory:
         scratch = Path(directory).resolve()
         source = scratch / "source.epub"
         candidate = scratch / "candidate" / source.name
@@ -119,16 +136,19 @@ def apply(args):
         verified = run_epubcheck(args.epubcheck, candidate, reports / "epubcheck-after.json")
         validate_candidate(baseline, verified, reports)
         require(sha_file(args.source) == digest, "Source changed during editing")
-        write_json(reports / "changes.json", {
-            "source_sha256": digest,
-            "output_sha256": sha_file(candidate),
-            "review_modified_timestamp": book["packages"][0]["version"] == "3.0",
-            "changes": {name: {"before": before[name], "after": after[name]} for name in sorted(replacements)},
-            "unchanged_entries": len(before) - len(replacements),
-            "epubcheck_version": verified.version,
-            "baseline_has_errors": baseline.has_errors,
-            "output_has_errors": verified.has_errors,
-        })
+        write_json(
+            reports / "changes.json",
+            {
+                "source_sha256": digest,
+                "output_sha256": sha_file(candidate),
+                "review_modified_timestamp": book["packages"][0]["version"] == "3.0",
+                "changes": {name: {"before": before[name], "after": after[name]} for name in sorted(replacements)},
+                "unchanged_entries": len(before) - len(replacements),
+                "epubcheck_version": verified.version,
+                "baseline_has_errors": baseline.has_errors,
+                "output_has_errors": verified.has_errors,
+            },
+        )
         candidate.chmod(0o600)
         # The staging file and destination share a filesystem. Linking is atomic
         # and fails if another process has already created the destination.
@@ -150,11 +170,15 @@ def main():
     compare.add_argument("candidate", type=Path)
     compare.add_argument("--expected-changes", type=Path, help="Require exact added, removed and changed member lists")
     compare.add_argument("--preserve-text", action="store_true", help="Require unchanged XHTML reading text")
-    compare.add_argument("--preserve-spine", action="store_true", help="Require unchanged reading order and page progression")
+    compare.add_argument(
+        "--preserve-spine", action="store_true", help="Require unchanged reading order and page progression"
+    )
     for command in (patch, compare):
         command.add_argument("--report-dir", required=True, type=Path)
         command.add_argument("--epubcheck", default="epubcheck", help="Path to the EPUBCheck executable")
-        command.add_argument("--allow-existing-errors", action="store_true", help="Allow an explicitly accepted baseline")
+        command.add_argument(
+            "--allow-existing-errors", action="store_true", help="Allow an explicitly accepted baseline"
+        )
     args = parser.parse_args()
     try:
         if args.command == "inspect":
@@ -175,7 +199,7 @@ def main():
         else:
             verify(args)
     except (ValueError, KeyError, OSError, BadZipFile, etree.LxmlError, subprocess.SubprocessError) as error:
-        parser.exit(1, f"epublib: {error}\n")
+        parser.exit(1, f"blackflame: {error}\n")
 
 
 if __name__ == "__main__":
