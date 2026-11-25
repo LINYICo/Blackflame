@@ -1,6 +1,6 @@
 [project]
 name = "blackflame"
-version = "1.4.1"
+version = "1.4.2"
 description = "Inspect, edit, audit, and validate existing EPUB 2 and EPUB 3 publications."
 readme = "README.md"
 license = "MIT"

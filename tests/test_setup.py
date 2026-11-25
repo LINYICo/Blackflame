@@ -1,7 +1,8 @@
-"""Unit tests for runtime detection, authorization boundaries, maintenance, and settings recovery."""
+"""Unit tests for runtime detection, authorization boundaries, transactional rollback, and settings safety."""
 
 import io
 import json
+import platform
 import sys
 import threading
 import unittest
@@ -19,24 +20,33 @@ import settings as settings_mod
 import skill
 
 
-def _fake_py_info(executable="/usr/bin/python3", version=(3, 13), abi="cpython-313", installed=None):
+def _fake_py_info(
+    executable="/usr/bin/python3",
+    version=(3, 13),
+    abi="cpython-313",
+    arch=None,
+    installed=None,
+):
     installed = set(installed or ())
     pkgs = {}
     for module, package in runtime.PACKAGES.items():
         if package in installed:
             pkgs[package] = {
                 "installed": True,
+                "importable": True,
                 "manager": "pip",
                 "version": "1.0.0",
                 "path": f"/site/{module}/__init__.py",
             }
         else:
             min_ver = runtime.PACKAGE_MIN_PYTHON.get(module, runtime.MIN_PYTHON)
-            pkgs[package] = {"installed": False, "unsupported": tuple(version) < min_ver}
+            pkgs[package] = {"installed": False, "importable": False, "unsupported": tuple(version) < min_ver}
     return {
         "executable": executable,
+        "real_executable": executable,
         "version": list(version),
         "abi": abi,
+        "arch": arch or platform.machine(),
         "prefix": "/usr",
         "base_prefix": "/usr",
         "site_packages": ["/site"],
@@ -102,6 +112,18 @@ class SettingsAndMigrationTests(unittest.TestCase):
             for i in range(4):
                 self.assertEqual(final[f"k_{i}"], 4)
 
+    def test_in_use_env_lock_prevents_premature_deletion(self):
+        with TemporaryDirectory() as tmp:
+            env_dir = Path(tmp) / "env-active"
+            env_dir.mkdir()
+            with settings_mod.env_in_use_lock(env_dir):
+                removed = settings_mod.safe_remove_env(env_dir)
+                self.assertFalse(removed)
+                self.assertTrue(env_dir.is_dir())
+            removed_after = settings_mod.safe_remove_env(env_dir)
+            self.assertTrue(removed_after)
+            self.assertFalse(env_dir.exists())
+
 
 class RuntimeDiscoveryTests(unittest.TestCase):
     def test_python_formula_does_not_own_pip_packages(self):
@@ -123,13 +145,14 @@ class RuntimeDiscoveryTests(unittest.TestCase):
                 "find_executable",
                 side_effect=lambda n: "/opt/python3.13/bin/python3" if n == "python3.13" else None,
             ),
+            patch.object(runtime, "_uv_managed_pythons", return_value=[]),
             patch.object(runtime, "probe_python", side_effect=lambda p: py313 if "3.13" in str(p) else py39),
         ):
             selected = runtime.select_python(preferred="/usr/bin/python3")
             self.assertIsNotNone(selected)
             self.assertEqual(selected["version"], [3, 13])
 
-    def test_abi_mismatch_does_not_reuse_managed_venv(self):
+    def test_abi_or_arch_mismatch_does_not_reuse_managed_venv(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             env_dir = root / "env-old" / "bin"
@@ -139,15 +162,17 @@ class RuntimeDiscoveryTests(unittest.TestCase):
                 "environment": {
                     "directory": "env-old",
                     "interpreter": "/usr/bin/python3",
-                    "python_version": "3.12",
-                    "abi": "cpython-312",
+                    "python_version": "3.13",
+                    "abi": "cpython-313",
+                    "arch": "x86_64",
                     "packages": ["lxml"],
                 }
             }
-            py313 = _fake_py_info("/usr/bin/python3", version=(3, 13), abi="cpython-313")
+            py_arm = _fake_py_info("/usr/bin/python3", version=(3, 13), abi="cpython-313", arch="arm64")
+            py_312 = _fake_py_info("/usr/bin/python3", version=(3, 12), abi="cpython-312", arch="x86_64")
             with patch.object(settings_mod, "ROOT", root):
-                chosen = runtime.environment(settings, py313)
-                self.assertEqual(chosen, Path("/usr/bin/python3"))
+                self.assertEqual(runtime.environment(settings, py_arm), Path("/usr/bin/python3"))
+                self.assertEqual(runtime.environment(settings, py_312), Path("/usr/bin/python3"))
 
     def test_unsupported_dependency_on_older_python(self):
         py311 = _fake_py_info("/usr/bin/python3.11", version=(3, 11), abi="cpython-311", installed=["lxml"])
@@ -160,6 +185,18 @@ class RuntimeDiscoveryTests(unittest.TestCase):
             self.assertEqual(tools["lxml"]["owner"], "pip")
             self.assertEqual(tools["epublib"]["owner"], "unsupported")
             self.assertEqual(tools["ebook-convert"]["owner"], "unsupported")
+
+    def test_missing_managed_checker_jar_detected_as_broken(self):
+        py313 = _fake_py_info(installed=["lxml"])
+        settings = {"checker": {"java": "/usr/bin/java", "jar": "/nonexistent/epubcheck.jar"}}
+        with (
+            patch.object(runtime, "brew_cellar", return_value=None),
+            patch.object(runtime, "find_executable", return_value=None),
+            patch.object(runtime, "select_python", return_value=py313),
+        ):
+            tools, _ = runtime.discover(settings)
+            self.assertEqual(tools["EPUBCheck"]["owner"], "broken")
+            self.assertTrue(maintenance.needs_refresh(settings, py313))
 
 
 class BootstrapAndStatusTests(unittest.TestCase):
@@ -225,8 +262,29 @@ class BootstrapAndStatusTests(unittest.TestCase):
                 bootstrap.setup_environment({}, tools, None, allow_system_install=False)
             inst_brew.assert_not_called()
 
+    def test_manual_python_manager_never_runs_implicit_install(self):
+        py313 = _fake_py_info(installed=[])
+        tools = {
+            "Homebrew": {"owner": "missing"},
+            "Python": {"owner": "external", "path": py313["executable"], "version": "3.13", "abi": "cpython-313"},
+            "uv": {"owner": "missing"},
+            "EPUBCheck": {"owner": "external", "path": "/usr/bin/epubcheck"},
+            **{p: {"owner": "missing"} for p in runtime.PACKAGES.values()},
+        }
+        settings = {"python_manager": "manual", "auto_install": True}
+        with patch.object(bootstrap, "make_environment") as mk:
+            with self.assertRaisesRegex(RuntimeError, "manual"):
+                bootstrap.setup_environment(settings, tools, py313, packages=["lxml"])
+            mk.assert_not_called()
 
-class MaintenanceAndOfflineTests(unittest.TestCase):
+    def test_merge_private_packages_preserves_existing_and_skips_host_duplicates(self):
+        py313 = _fake_py_info(installed=["lxml"])
+        settings = {"environment": {"packages": ["lxml", "epublib"]}}
+        merged = bootstrap.merge_private_packages(settings, ["beautifulsoup4"], py313)
+        self.assertEqual(merged, ["epublib", "beautifulsoup4"])
+
+
+class TransactionalMaintenanceTests(unittest.TestCase):
     def test_shared_and_homebrew_tools_are_not_modified_during_maintenance(self):
         tools = {p: {"owner": "pip", "path": "/shared/site-packages"} for p in runtime.PACKAGES.values()}
         tools["EPUBCheck"] = {"owner": "homebrew", "path": "/opt/homebrew/bin/epubcheck", "formula": "epubcheck"}
@@ -242,12 +300,14 @@ class MaintenanceAndOfflineTests(unittest.TestCase):
             mk.assert_not_called()
             self.assertNotIn("last_update_error", settings)
 
-    def test_private_update_failure_preserves_working_environment_offline(self):
+    def test_rollback_when_venv_succeeds_but_epubcheck_update_fails(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
-            old_env_dir = root / "env-working" / "bin"
-            old_env_dir.mkdir(parents=True)
-            (old_env_dir / "python").touch()
+            old_env = root / "env-working" / "bin"
+            old_env.mkdir(parents=True)
+            (old_env / "python").touch()
+            staged_dir = root / "env-staged-new"
+            staged_dir.mkdir()
             py313 = _fake_py_info("/usr/bin/python3", version=(3, 13), abi="cpython-313")
             settings = {
                 "platform": "general",
@@ -256,6 +316,50 @@ class MaintenanceAndOfflineTests(unittest.TestCase):
                     "interpreter": "/usr/bin/python3",
                     "python_version": "3.13",
                     "abi": "cpython-313",
+                    "arch": py313["arch"],
+                    "manager": "uv",
+                    "packages": ["lxml"],
+                },
+                "checker": {"java": "/usr/bin/java", "jar": str(root / "old.jar")},
+                "next_update_at": "2000-01-01T00:00:00+00:00",
+            }
+            (root / "old.jar").write_bytes(b"jar")
+            tools = {p: {"owner": "managed"} for p in runtime.PACKAGES.values()}
+            tools["EPUBCheck"] = {"owner": "official", "jar": str(root / "old.jar")}
+            with (
+                patch.object(settings_mod, "ROOT", root),
+                patch.object(
+                    bootstrap,
+                    "stage_private_packages",
+                    return_value=({"directory": "env-staged-new", "packages": ["lxml"]}, staged_dir),
+                ),
+                patch.object(bootstrap, "stage_official_checker", side_effect=RuntimeError("epubcheck offline")),
+            ):
+                updated = maintenance.maintain(settings, tools, py313)
+                self.assertFalse(updated)
+                self.assertIn("epubcheck offline", settings["last_update_error"])
+                # Staged venv rolled back; old working env preserved!
+                self.assertFalse(staged_dir.exists())
+                self.assertTrue((root / "env-working" / "bin" / "python").is_file())
+                self.assertEqual(settings["environment"]["directory"], "env-working")
+
+    def test_rollback_when_settings_write_fails(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old_env = root / "env-working" / "bin"
+            old_env.mkdir(parents=True)
+            (old_env / "python").touch()
+            staged_dir = root / "env-staged-fail"
+            staged_dir.mkdir()
+            py313 = _fake_py_info("/usr/bin/python3", version=(3, 13), abi="cpython-313")
+            settings = {
+                "platform": "general",
+                "environment": {
+                    "directory": "env-working",
+                    "interpreter": "/usr/bin/python3",
+                    "python_version": "3.13",
+                    "abi": "cpython-313",
+                    "arch": py313["arch"],
                     "manager": "uv",
                     "packages": ["lxml"],
                 },
@@ -265,12 +369,15 @@ class MaintenanceAndOfflineTests(unittest.TestCase):
             tools["EPUBCheck"] = {"owner": "external", "path": "/usr/bin/epubcheck"}
             with (
                 patch.object(settings_mod, "ROOT", root),
-                patch.object(bootstrap, "make_environment", side_effect=RuntimeError("offline: no network")),
+                patch.object(
+                    bootstrap,
+                    "stage_private_packages",
+                    return_value=({"directory": "env-staged-fail", "packages": ["lxml"]}, staged_dir),
+                ),
+                patch.object(settings_mod, "save_settings", side_effect=OSError("disk full")),
             ):
                 updated = maintenance.maintain(settings, tools, py313)
                 self.assertFalse(updated)
-                self.assertIn("offline", settings["last_update_error"])
-                # Previous working environment must remain intact and active!
-                self.assertEqual(settings["environment"]["directory"], "env-working")
+                self.assertFalse(staged_dir.exists())
                 self.assertTrue((root / "env-working" / "bin" / "python").is_file())
-                self.assertEqual(runtime.environment(settings, py313), root / "env-working" / "bin" / "python")
+                self.assertEqual(settings["environment"]["directory"], "env-working")

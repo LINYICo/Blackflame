@@ -49,11 +49,7 @@ jobs:
         run: |
           cd "$RUNNER_TEMP"
           curl --fail --location --retry 3 -o epubcheck.zip https://github.com/w3c/epubcheck/releases/download/v5.4.0/epubcheck-5.4.0.zip
-          if command -v sha256sum >/dev/null 2>&1; then
-            echo "33350c61038e71dfb3d45a76aed04bf5481e6d5500cb780f6e98db8bbd15a28c  epubcheck.zip" | sha256sum --check
-          else
-            echo "33350c61038e71dfb3d45a76aed04bf5481e6d5500cb780f6e98db8bbd15a28c  epubcheck.zip" | shasum -a 256 -c
-          fi
+          python3 -c 'import hashlib, pathlib, sys; expected = "33350c61038e71dfb3d45a76aed04bf5481e6d5500cb780f6e98db8bbd15a28c"; actual = hashlib.sha256(pathlib.Path("epubcheck.zip").read_bytes()).hexdigest(); sys.exit(0 if actual == expected else f"SHA-256 mismatch: {actual}")'
           unzip -q epubcheck.zip
           printf '#!/bin/sh\nexec java -jar "%s/epubcheck-5.4.0/epubcheck.jar" "$@"\n' "$RUNNER_TEMP" > epubcheck
           chmod +x epubcheck

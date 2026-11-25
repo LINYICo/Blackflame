@@ -1,4 +1,4 @@
-"""Environment bootstrap, private venv creation, and explicitly authorized tool setup."""
+"""Environment bootstrap, private venv creation, dependency merging, and authorized tool setup."""
 
 import json
 import os
@@ -60,8 +60,8 @@ def install_checker(dest):
     return dest / name / "epubcheck.jar"
 
 
-def install_official_checker(settings):
-    """Install the official EPUBCheck JAR into Blackflame's private checker directory."""
+def stage_official_checker():
+    """Download and verify the official EPUBCheck JAR without mutating settings yet."""
     java = runtime.java_executable()
     if not java:
         raise RuntimeError("Official EPUBCheck requires an existing Java runtime")
@@ -73,7 +73,11 @@ def install_official_checker(settings):
         parent.parent.mkdir(exist_ok=True)
         if not parent.exists():
             jar.parent.rename(parent)
-        settings["checker"] = dict(java=java, jar=str(parent / jar.name))
+        return dict(java=java, jar=str(parent / jar.name))
+
+
+def install_official_checker(settings):
+    settings["checker"] = stage_official_checker()
     return settings["checker"]
 
 
@@ -114,9 +118,29 @@ def install_uv(brew):
     return uv_exe
 
 
-def make_environment(settings, packages, dest, py_info=None):
-    """Create a skill-private venv, reusing host site-packages only when ABI matches."""
-    method = settings.get("python_manager") or ("uv" if runtime.find_executable("uv") else "pip")
+def _compatible_packages(packages, py_version):
+    result = []
+    seen = set()
+    pkg_to_mod = {pkg: mod for mod, pkg in runtime.PACKAGES.items()}
+    for pkg in packages:
+        if pkg in seen:
+            continue
+        mod = pkg_to_mod.get(pkg)
+        min_ver = runtime.PACKAGE_MIN_PYTHON.get(mod, runtime.MIN_PYTHON) if mod else runtime.MIN_PYTHON
+        if tuple(py_version) >= min_ver:
+            seen.add(pkg)
+            result.append(pkg)
+    return result
+
+
+def make_environment(settings, packages, dest, py_info=None, *, upgrade=False):
+    """Create and verify a skill-private venv, reusing host site-packages only when ABI & arch match."""
+    method = settings.get("python_manager")
+    if method == "manual":
+        raise RuntimeError("Python package management is set to manual; automatic installation is disabled")
+    if not method:
+        method = "uv" if runtime.find_executable("uv") else "pip"
+
     info = py_info or runtime.select_python()
     if not info:
         raise RuntimeError("No compatible Python >= 3.11 interpreter found")
@@ -139,11 +163,15 @@ def make_environment(settings, packages, dest, py_info=None):
             str(dest),
         ]
 
-    # Verify the new venv matches the selected interpreter's ABI before exposing host site-packages.
+    # Verify the new venv matches the selected interpreter's version, ABI, and CPU architecture.
     venv_info = runtime.probe_python(str(python))
     if not venv_info:
         raise RuntimeError("Created virtual environment failed Python probe")
-    if venv_info["abi"] == info["abi"] and venv_info["version"] == info["version"]:
+    if (
+        venv_info["abi"] == info["abi"]
+        and venv_info["version"] == info["version"]
+        and venv_info["arch"] == info["arch"]
+    ):
         paths = list(info.get("site_packages", []))
         if legacy := runtime.legacy_library(settings, venv_info["abi"]):
             paths.append(str(legacy))
@@ -154,37 +182,65 @@ def make_environment(settings, packages, dest, py_info=None):
             ).strip()
             (Path(target) / "blackflame-host.pth").write_text("\n".join(paths) + "\n", encoding="utf-8")
 
-    # Install missing packages cleanly without blindly upgrading unrelated host packages.
-    run_quietly([*install, *packages])
+    cmd = [*install, *(["--upgrade"] if upgrade else []), *packages]
+    run_quietly(cmd)
+
+    # Verify every installed package is genuinely importable (including lxml.etree).
     modules = [module for module, package in runtime.PACKAGES.items() if package in packages]
     if modules:
-        run_quietly([str(python), "-c", "import " + ", ".join(modules)])
+        verify_lines = [f"import {m}" for m in modules]
+        if "lxml" in modules:
+            verify_lines.append("from lxml import etree")
+        run_quietly([str(python), "-c", "; ".join(verify_lines)])
+
     return dict(
         directory=dest.name,
         interpreter=base_python,
         python_version=".".join(str(v) for v in venv_info["version"]),
         abi=venv_info["abi"],
+        arch=venv_info["arch"],
         manager=method,
         packages=list(packages),
     )
 
 
-def ensure_private_packages(settings, packages, py_info):
-    """Build and verify a new skill-private venv before switching settings['environment']."""
-    if not packages:
-        return False
+def merge_private_packages(settings, requested, py_info):
+    """Merge existing managed packages with newly requested ones, skipping host-satisfied or unsupported ones."""
+    existing = list(settings.get("environment", {}).get("packages", []))
+    combined = _compatible_packages([*existing, *requested], py_info["version"])
+    # Do not duplicate packages already safely installed and importable in the host interpreter.
+    needed = []
+    for pkg in combined:
+        host_pkg = py_info["packages"].get(pkg, {})
+        if not (host_pkg.get("installed") and host_pkg.get("importable")):
+            needed.append(pkg)
+    return needed
+
+
+def stage_private_packages(settings, packages, py_info, *, upgrade=False):
+    """Build and verify a new skill-private venv in a temp dir without mutating settings or removing old env."""
+    merged = merge_private_packages(settings, packages, py_info)
+    if not merged:
+        return None, None
     settings_mod.ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
-    old_env = runtime.environment(settings, py_info)
     dest = Path(mkdtemp(prefix="env-", dir=settings_mod.ROOT))
     try:
-        new_env = make_environment(settings, packages, dest, py_info=py_info)
+        new_env = make_environment(settings, merged, dest, py_info=py_info, upgrade=upgrade)
     except BaseException:
         shutil.rmtree(dest, ignore_errors=True)
         raise
+    return new_env, dest
+
+
+def ensure_private_packages(settings, packages, py_info):
+    """Transactionally build, verify, and stage a private venv preserving prior managed packages."""
+    old_env_py = runtime.environment(settings, py_info)
+    old_env_dir = old_env_py.parent.parent if old_env_py != Path(py_info["executable"]) else None
+    new_env, _ = stage_private_packages(settings, packages, py_info, upgrade=False)
+    if not new_env:
+        return None
     settings["environment"] = new_env
-    if old_env != Path(py_info["executable"]) and old_env != runtime.env_python(dest):
-        shutil.rmtree(old_env.parent.parent, ignore_errors=True)
-    return True
+    return old_env_dir
 
 
 def setup_environment(
@@ -196,11 +252,15 @@ def setup_environment(
     packages=None,
     install_epubcheck=False,
 ):
-    """Reuse existing host tools; install only missing items within authorized boundaries."""
+    """Reuse existing host tools; install only missing items within authorized boundaries.
+
+    Returns (tools, py_info, old_env_dir_to_clean) so callers can persist settings first
+    and safely remove any superseded environment only after commit succeeds.
+    """
     brew = tools["Homebrew"].get("path")
     uv_exe = tools["uv"].get("path")
     need_python = tools["Python"]["owner"] == "missing"
-    need_checker = install_epubcheck and tools["EPUBCheck"]["owner"] == "missing"
+    need_checker = install_epubcheck and tools["EPUBCheck"]["owner"] in ("missing", "broken")
 
     # Never install Homebrew if existing Python/uv/EPUBCheck already satisfy requirements.
     need_system_tool = need_python or (need_checker and not runtime.java_executable())
@@ -218,6 +278,7 @@ def setup_environment(
         py_info = install_python(brew, uv_exe)
         if not py_info:
             raise RuntimeError("Python >= 3.11 installation completed but no compatible interpreter was found")
+        tools, py_info = runtime.discover(settings, preferred_python=py_info["executable"])
 
     if not uv_exe and allow_system_install and brew:
         uv_exe = install_uv(brew)
@@ -245,8 +306,15 @@ def setup_environment(
     settings.setdefault("checker_manager", "homebrew" if brew else "official")
     settings.setdefault("update_interval_months", 1)
 
+    old_env_dir = None
     target_packages = list(packages) if packages is not None else []
-    missing_pkgs = [p for p in target_packages if tools.get(p, {}).get("owner") == "missing"]
-    if missing_pkgs:
-        ensure_private_packages(settings, missing_pkgs, py_info)
-    return runtime.discover(settings, preferred_python=py_info["executable"] if py_info else None)
+    missing_or_broken = [p for p in target_packages if tools.get(p, {}).get("owner") in ("missing", "broken")]
+    if missing_or_broken:
+        if settings.get("python_manager") == "manual":
+            raise RuntimeError(
+                f"Missing packages ({', '.join(missing_or_broken)}) while python_manager is set to manual"
+            )
+        old_env_dir = ensure_private_packages(settings, missing_or_broken, py_info)
+
+    tools, py_info = runtime.discover(settings, preferred_python=py_info["executable"] if py_info else None)
+    return tools, py_info, old_env_dir

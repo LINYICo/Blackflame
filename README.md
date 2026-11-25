@@ -4,7 +4,7 @@ An agent skill for editing existing EPUB books. Inspect the package, review a ta
 
 ## Install
 
-Download [Blackflame.zip](https://github.com/LINYICo/Blackflame/releases/download/v1.4.1/Blackflame.zip) and extract the `blackflame/` folder into your client's skills directory. For Codex, use `~/.agents/skills/`. Core editing requires Python 3.11+ (`epublib` requires 3.13+ and `ebook-convert` requires 3.12+).
+Download [Blackflame.zip](https://github.com/LINYICo/Blackflame/releases/download/v1.4.2/Blackflame.zip) and extract the `blackflame/` folder into your client's skills directory. For Codex, use `~/.agents/skills/`. Core editing requires Python 3.11+ (`epublib` requires 3.13+ and `ebook-convert` requires 3.12+).
 
 Run `python3 blackflame/scripts/skill.py status` for a read-only check of your local Python, `uv`, EPUBCheck, and libraries. Existing tools are reused directly without duplicate installation. Run `python3 blackflame/scripts/skill.py setup` to prepare missing private Python dependencies (pass `--allow-system-install` only when authorizing system-level installs such as Homebrew or EPUBCheck).
 

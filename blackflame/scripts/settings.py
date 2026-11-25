@@ -1,8 +1,9 @@
-"""Settings storage, file locking, atomic writes, and legacy migration for Blackflame."""
+"""Settings storage, file locking, atomic writes, in-use env locks, and legacy migration."""
 
 import calendar
 import json
 import os
+import shutil
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -32,6 +33,50 @@ def settings_lock(root=None):
 
             fcntl.flock(lock, fcntl.LOCK_EX)
         yield
+
+
+@contextmanager
+def env_in_use_lock(env_dir):
+    """Hold a shared lock on a managed venv directory while a child process is executing."""
+    if not env_dir or not Path(env_dir).is_dir():
+        yield
+        return
+    lock_path = Path(env_dir) / ".in-use.lock"
+    with lock_path.open("a+b") as handle:
+        if os.name != "nt":
+            import fcntl
+
+            fcntl.flock(handle, fcntl.LOCK_SH)
+        try:
+            yield
+        finally:
+            if os.name != "nt":
+                import fcntl
+
+                fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def safe_remove_env(env_dir):
+    """Remove an old managed venv only if no running process holds its in-use shared lock."""
+    target = Path(env_dir)
+    if not target.is_dir():
+        return True
+    lock_path = target / ".in-use.lock"
+    if os.name != "nt":
+        import fcntl
+
+        try:
+            with lock_path.open("a+b") as handle:
+                try:
+                    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    return False
+                shutil.rmtree(target, ignore_errors=True)
+                return True
+        except OSError:
+            return False
+    shutil.rmtree(target, ignore_errors=True)
+    return True
 
 
 def _read_json_dict(path):

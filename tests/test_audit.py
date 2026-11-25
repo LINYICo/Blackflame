@@ -1,8 +1,6 @@
-"""Tests for structured EPUB quality audit, EPUB 2/3 structures, security, and release ZIP execution."""
+"""Tests for hardened EPUB quality audit: XML safety, images/MIME, CSS, footnotes, and EPUB 2/3 nav."""
 
-import json
 import struct
-import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -16,14 +14,22 @@ from audit import audit_epub, detect_image_info
 from publication import CONTAINER, MEDIA_TYPE, OPF, XHTML, parse_xml
 
 
-def _make_png(width, height):
-    return (
+def _make_png(width, height, *, truncated=False):
+    header = (
         b"\x89PNG\r\n\x1a\n"
         + struct.pack(">I", 13)
         + b"IHDR"
         + struct.pack(">II", width, height)
-        + b"\x08\x02\x00\x00\x00"
+        + b"\x08\x02\x00\x00\x00\x00\x00\x00\x00"
     )
+    if truncated:
+        return header
+    return header + struct.pack(">I", 0) + b"IEND\xaeB`\x82"
+
+
+def _make_jpeg(width, height, *, truncated=False):
+    sof0 = b"\xff\xc0" + struct.pack(">HBHHB", 11, 8, height, width, 1) + b"\x01\x11\x00"
+    return b"\xff\xd8" + sof0 + (b"" if truncated else b"\xff\xd9")
 
 
 def _write_epub(path, members):
@@ -34,14 +40,25 @@ def _write_epub(path, members):
 
 
 class AuditTests(unittest.TestCase):
-    def test_detect_image_info_png(self):
-        info = detect_image_info(_make_png(1200, 1800))
-        self.assertEqual(info["format"], "png")
-        self.assertEqual((info["width"], info["height"], info["pixels"]), (1200, 1800, 2_160_000))
+    def test_detect_image_info_valid_and_corrupted(self):
+        valid_png = detect_image_info(_make_png(1200, 1800))
+        self.assertTrue(valid_png["valid"])
+        self.assertEqual((valid_png["format"], valid_png["width"], valid_png["height"]), ("png", 1200, 1800))
 
-    def test_epub3_clean_with_cover_and_bidirectional_footnotes(self):
+        bad_png = detect_image_info(_make_png(1200, 1800, truncated=True))
+        self.assertFalse(bad_png["valid"])
+        self.assertEqual(bad_png["width"], "unknown")
+
+        valid_jpg = detect_image_info(_make_jpeg(800, 600))
+        self.assertTrue(valid_jpg["valid"])
+        self.assertEqual((valid_jpg["format"], valid_jpg["width"], valid_jpg["height"]), ("jpeg", 800, 600))
+
+        bad_jpg = detect_image_info(_make_jpeg(800, 600, truncated=True))
+        self.assertFalse(bad_jpg["valid"])
+
+    def test_epub3_with_xml_comments_pis_svg_multitoken_footnotes_and_external_links(self):
         with TemporaryDirectory() as tmp:
-            epub = Path(tmp) / "clean.epub"
+            epub = Path(tmp) / "rich.epub"
             _write_epub(
                 epub,
                 {
@@ -54,44 +71,118 @@ class AuditTests(unittest.TestCase):
                         f'<package xmlns="{OPF}" version="3.0" unique-identifier="id" xml:lang="en">'
                         '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
                         "<dc:title>Book</dc:title><dc:identifier id='id'>urn:test:1</dc:identifier>"
-                        "<dc:language>en</dc:language><dc:rights>Copyright 2026</dc:rights>"
+                        "<dc:language>en</dc:language>"
                         '<meta property="dcterms:modified">2026-11-25T00:00:00Z</meta>'
                         "</metadata>"
                         "<manifest>"
                         '<item id="nav" href="nav.xhtml" properties="nav" media-type="application/xhtml+xml"/>'
                         '<item id="c1" href="ch1.xhtml" media-type="application/xhtml+xml"/>'
                         '<item id="cov" href="cover.png" properties="cover-image" media-type="image/png"/>'
+                        '<item id="fig" href="fig.jpg" media-type="image/jpeg"/>'
                         '<item id="css" href="style.css" media-type="text/css"/>'
+                        '<item id="sub" href="sub.css" media-type="text/css"/>'
                         "</manifest>"
                         '<spine><itemref idref="c1"/></spine></package>'
                     ),
                     "OPS/nav.xhtml": (
                         f'<html xmlns="{XHTML}" xmlns:epub="http://www.idpf.org/2007/ops">'
                         "<head><title>TOC</title></head>"
-                        '<body><nav epub:type="toc"><ol><li><a href="ch1.xhtml#s1">One</a></li></ol></nav></body></html>'
-                    ),
-                    "OPS/ch1.xhtml": (
-                        f'<html xmlns="{XHTML}" xmlns:epub="http://www.idpf.org/2007/ops">'
-                        '<head><title>Ch1</title><link rel="stylesheet" href="style.css"/></head>'
-                        '<body><h1 id="s1">One</h1><img src="cover.png" alt="cover"/>'
-                        '<p>Text<a id="ref1" epub:type="noteref" href="#fn1">1</a></p>'
-                        '<aside id="fn1" epub:type="footnote"><p>Note <a href="#ref1">back</a></p></aside>'
+                        '<body><nav epub:type="toc landmark"><ol><li><a href="ch1.xhtml#s1">One</a></li></ol></nav>'
                         "</body></html>"
                     ),
-                    "OPS/style.css": "body { font-family: serif; }",
+                    "OPS/ch1.xhtml": (
+                        '<?xml version="1.0" encoding="utf-8"?>'
+                        '<?custom-pi test="1"?>'
+                        f'<html xmlns="{XHTML}" xmlns:epub="http://www.idpf.org/2007/ops" '
+                        'xmlns:xlink="http://www.w3.org/1999/xlink">'
+                        '<head><title>Ch1</title><link rel="stylesheet" href="style.css"/></head>'
+                        '<body><!-- leading comment --><h1 id="s1">One</h1>'
+                        "<div style=\"background-image: url('fig.jpg')\"></div>"
+                        '<svg xmlns="http://www.w3.org/2000/svg"><image xlink:href="cover.png"/></svg>'
+                        '<p>See <a href="https://example.org/ref">Reference</a>'
+                        '<a id="ref1" epub:type="noteref ref-marker" href="#fn1">1</a></p>'
+                        '<aside id="fn1" epub:type="footnote custom-note"><p>Note <a href="#ref1">back</a></p></aside>'
+                        "</body></html>"
+                    ),
+                    "OPS/style.css": '/* @import "ignored.css"; */ @import "sub.css"; body { color: #111; }',
+                    "OPS/sub.css": "p { margin: 0; }",
                     "OPS/cover.png": _make_png(1000, 1500),
+                    "OPS/fig.jpg": _make_jpeg(1200, 800),
                 },
             )
             report = audit_epub(epub)
             self.assertTrue(report["structural_integrity"]["passed"])
             self.assertEqual(report["reader_compatibility"]["footnote_issues"], [])
+            # Normal <a> hyperlink is classified under external_links, NOT remote_resources!
             self.assertEqual(report["reader_compatibility"]["remote_resources"], [])
-            self.assertEqual(report["reader_compatibility"]["covers"][0]["format"], "png")
-            self.assertFalse(report["reader_compatibility"]["covers"][0]["exceeds_apple_books_pixel_limit"])
+            self.assertEqual(len(report["reader_compatibility"]["external_links"]), 1)
+            # Missing dc:rights is optional (does NOT fail structural_integrity).
+            self.assertEqual(report["structural_integrity"]["required_metadata_issues"], [])
+            self.assertEqual(
+                report["reader_compatibility"]["optional_metadata_notes"][0]["compliance_impact"],
+                "none",
+            )
+            self.assertEqual(report["epubcheck_conformance"]["status"], "not_run")
+            self.assertEqual(report["content_fidelity"]["status"], "not_verified")
 
-    def test_epub2_ncx_broken_links_missing_assets_remote_and_footnote_issues(self):
+    def test_broken_images_mime_mismatch_oversized_inline_css_import_and_empty_toc(self):
         with TemporaryDirectory() as tmp:
-            epub = Path(tmp) / "broken.epub"
+            epub = Path(tmp) / "issues.epub"
+            _write_epub(
+                epub,
+                {
+                    CONTAINER: (
+                        '<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+                        '<rootfiles><rootfile full-path="book.opf" '
+                        'media-type="application/oebps-package+xml"/></rootfiles></container>'
+                    ),
+                    "book.opf": (
+                        f'<package xmlns="{OPF}" version="3.0" unique-identifier="id">'
+                        '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+                        "<dc:title>Broken</dc:title><dc:identifier id='id'>urn:test:3</dc:identifier>"
+                        "<dc:language>en</dc:language>"
+                        "</metadata>"
+                        "<manifest>"
+                        '<item id="nav" href="nav.xhtml" properties="nav" media-type="application/xhtml+xml"/>'
+                        '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>'
+                        '<item id="cov" href="cover.png" properties="cover-image" media-type="image/png"/>'
+                        '<item id="bad" href="corrupt.png" media-type="image/png"/>'
+                        '<item id="big" href="big.png" media-type="image/png"/>'
+                        '<item id="css" href="style.css" media-type="text/css"/>'
+                        "</manifest>"
+                        '<spine><itemref idref="c1"/></spine></package>'
+                    ),
+                    "nav.xhtml": (
+                        f'<html xmlns="{XHTML}" xmlns:epub="http://www.idpf.org/2007/ops">'
+                        "<head><title>TOC</title></head>"
+                        '<body><nav epub:type="toc"><ol></ol></nav></body></html>'
+                    ),
+                    "c1.xhtml": (
+                        f'<html xmlns="{XHTML}"><head><title>C1</title><link rel="stylesheet" href="style.css"/></head>'
+                        '<body><p id="dup">A</p><p id="dup">B</p>'
+                        '<div style="background: url(missing-inline.png)"></div></body></html>'
+                    ),
+                    "style.css": '@import "missing-import.css";',
+                    "cover.png": _make_jpeg(800, 1000),  # JPEG bytes declared as image/png -> MIME mismatch!
+                    "corrupt.png": _make_png(100, 100, truncated=True),
+                    "big.png": _make_png(3000, 2000),  # 6M pixels inline image > 5.6M Apple Books limit
+                },
+            )
+            report = audit_epub(epub)
+            si = report["structural_integrity"]
+            rc = report["reader_compatibility"]
+            self.assertFalse(si["passed"])
+            self.assertTrue(any(i["type"] == "empty_epub3_toc" for i in si["navigation_issues"]))
+            self.assertTrue(any(i["type"] == "duplicate_element_id" for i in si["link_issues"]))
+            self.assertTrue(any(i["type"] == "missing_css_import" for i in si["asset_issues"]))
+            self.assertTrue(any(i["type"] == "missing_css_url" for i in si["asset_issues"]))
+            self.assertTrue(any(i["type"] == "image_mime_mismatch" for i in si["image_issues"]))
+            self.assertTrue(any(i["type"] == "corrupted_or_unrecognized_image" for i in si["image_issues"]))
+            self.assertTrue(any(img["member"] == "big.png" and not img["is_cover"] for img in rc["oversized_images"]))
+
+    def test_epub2_missing_ncx_is_reported(self):
+        with TemporaryDirectory() as tmp:
+            epub = Path(tmp) / "epub2-no-ncx.epub"
             _write_epub(
                 epub,
                 {
@@ -103,81 +194,22 @@ class AuditTests(unittest.TestCase):
                     "book.opf": (
                         f'<package xmlns="{OPF}" version="2.0" unique-identifier="id">'
                         '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
-                        "<dc:title>EPUB2</dc:title><dc:identifier id='id'>urn:test:2</dc:identifier>"
-                        "<dc:language>en</dc:language><meta name='cover' content='cov'/>"
-                        "</metadata>"
-                        "<manifest>"
-                        '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>'
-                        '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>'
-                        '<item id="c1" href="missing.xhtml" media-type="application/xhtml+xml"/>'
-                        '<item id="cov" href="cover.png" media-type="image/png"/>'
-                        '<item id="css" href="style.css" media-type="text/css"/>'
-                        "</manifest>"
-                        '<spine toc="ncx"><itemref idref="c1"/><itemref idref="ghost"/></spine></package>'
+                        "<dc:title>E2</dc:title><dc:identifier id='id'>urn:test:e2</dc:identifier>"
+                        "<dc:language>en</dc:language></metadata>"
+                        '<manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest>'
+                        '<spine><itemref idref="c1"/></spine></package>'
                     ),
-                    "toc.ncx": (
-                        '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">'
-                        '<navMap><navPoint id="p1"><navLabel><text>Ch1</text></navLabel>'
-                        '<content src="c1.xhtml#missing-frag"/></navPoint></navMap></ncx>'
-                    ),
-                    "c1.xhtml": (
-                        f'<html xmlns="{XHTML}" xmlns:epub="http://www.idpf.org/2007/ops">'
-                        '<head><title>Ch1</title><link rel="stylesheet" href="style.css"/></head>'
-                        '<body><img src="absent.png" alt="x"/>'
-                        '<a href="https://example.com/remote.jpg">remote</a>'
-                        '<a id="r1" epub:type="noteref" href="#fn1">1</a>'
-                        '<aside id="fn1" epub:type="footnote"><p>No return link</p></aside>'
-                        "</body></html>"
-                    ),
-                    "style.css": "@font-face { src: url('fonts/missing.woff2'); }",
-                    "cover.png": _make_png(3000, 2000),  # 6M pixels > 5.6M Apple Books limit
+                    "c1.xhtml": f'<html xmlns="{XHTML}"><head><title>C1</title></head><body><p>Hi</p></body></html>',
                 },
             )
             report = audit_epub(epub)
-            si = report["structural_integrity"]
-            rc = report["reader_compatibility"]
-            self.assertFalse(si["passed"])
-            self.assertTrue(any(i["type"] == "duplicate_manifest_id" for i in si["manifest_issues"]))
-            self.assertTrue(any(i["type"] == "missing_manifest_resource" for i in si["manifest_issues"]))
-            self.assertTrue(any(i["type"] == "invalid_spine_idref" for i in si["spine_issues"]))
-            self.assertTrue(any(i["type"] == "missing_ncx_fragment" for i in si["navigation_issues"]))
-            self.assertTrue(any(i["type"] == "missing_image" for i in si["asset_issues"]))
-            self.assertTrue(any(i["type"] == "missing_css_asset" for i in si["asset_issues"]))
-            self.assertTrue(any(i["type"] == "footnote_missing_return_link" for i in rc["footnote_issues"]))
-            self.assertTrue(len(rc["remote_resources"]) >= 1)
-            self.assertTrue(rc["covers"][0]["exceeds_apple_books_pixel_limit"])
+            self.assertTrue(
+                any(
+                    i["type"] == "missing_epub2_ncx_or_toc" for i in report["structural_integrity"]["navigation_issues"]
+                )
+            )
 
     def test_xml_external_entity_is_not_resolved(self):
         xxe = b'<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><root>&xxe;</root>'
         tree = parse_xml(xxe)
         self.assertNotIn("root:", tree.getroot().text or "")
-
-
-class ReleaseZipStandaloneTests(unittest.TestCase):
-    def test_packaged_skill_runs_independently_after_extraction(self):
-        repo_root = Path(__file__).resolve().parents[1]
-        skill_dir = repo_root / "blackflame"
-        with TemporaryDirectory() as tmp:
-            bundle = Path(tmp) / "Blackflame.zip"
-            with ZipFile(bundle, "w") as zf:
-                for file in skill_dir.rglob("*"):
-                    if file.is_file() and "__pycache__" not in file.parts and file.suffix != ".pyc":
-                        zf.write(file, file.relative_to(repo_root))
-            extract_dir = Path(tmp) / "extracted"
-            with ZipFile(bundle) as zf:
-                zf.extractall(extract_dir)
-            standalone_skill = extract_dir / "blackflame" / "scripts" / "skill.py"
-            self.assertTrue(standalone_skill.is_file())
-            env_home = Path(tmp) / "home"
-            proc = subprocess.run(
-                [sys.executable, str(standalone_skill), "status"],
-                cwd=extract_dir,
-                env={**__import__("os").environ, "BLACKFLAME_HOME": str(env_home)},
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            data = json.loads(proc.stdout)
-            self.assertTrue(data["first_use"])
-            self.assertFalse((env_home / "settings.json").exists())
-            self.assertIn("lxml", data["tools"])

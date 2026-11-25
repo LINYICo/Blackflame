@@ -3,7 +3,7 @@ name: blackflame
 description: Inspect, audit, and edit existing EPUB 2 and EPUB 3 publications. Use for metadata corrections, XHTML copyediting, promotional content removal, cover replacement, EPUB 3 migration, or Apple Books compatibility. Verify the edited copy against the source.
 license: MIT
 metadata:
-  version: "1.4.1"
+  version: "1.4.2"
 ---
 
 # Blackflame
