@@ -1,43 +1,45 @@
 # Blackflame
 
-An agent skill for editing existing EPUB books. Inspect the package, review a targeted change, and deliver a new EPUB with a record of every changed ZIP member.
+An agent-first skill for e-book processing in Codex, Gemini, Claude Code, and other agent clients. Blackflame provides domain expertise, tool-usage rules, and deterministic safety helpers so agents can reliably handle EPUB metadata, content and structural editing, format conversion, and validation.
 
 ## Install
 
-Download [Blackflame.zip](https://github.com/LINYICo/Blackflame/releases/download/v1.4.2/Blackflame.zip) and extract the `blackflame/` folder into your client's skills directory. For Codex, use `~/.agents/skills/`. Core editing requires Python 3.11+ (`epublib` requires 3.13+ and `ebook-convert` requires 3.12+).
+Download `Blackflame.zip` from the `v1.5.0` GitHub Release and extract the `blackflame/` folder into your client's skills directory (for Codex, `~/.agents/skills/`).
 
-Run `python3 blackflame/scripts/skill.py status` for a read-only check of your local Python, `uv`, EPUBCheck, and libraries. Existing tools are reused directly without duplicate installation. Run `python3 blackflame/scripts/skill.py setup` to prepare missing private Python dependencies (pass `--allow-system-install` only when authorizing system-level installs such as Homebrew or EPUBCheck).
+The skill includes its own `blackflame/pyproject.toml` (Python 3.13+, managed with [uv](https://docs.astral.sh/uv/)). Prepare dependencies inside the skill directory when needed:
 
-Preferences and the UTC update schedule are stored in `~/.config/blackflame/settings.json` (with automatic migration from legacy `~/.config/epublib/settings.json`). The skill respects `XDG_CONFIG_HOME` and supports an explicit `BLACKFLAME_HOME`. [Dependency details](blackflame/references/tools.md)
+```sh
+cd blackflame && uv sync
+```
+
+## Capabilities & Tech Stack
+
+- **Metadata**: Inspect, verify, and edit EPUB title, author, translator, ISBN, publisher, language, series, and cover artwork.
+- **Editing**: Proofread XHTML, fix typography, remove promotional inserts, repair TOC/navigation/footnotes, migrate EPUB 2 to EPUB 3, and optimize Apple Books compatibility.
+- **Conversion**: Convert e-book formats directly via the `ebook-convert` CLI.
+
+Runtime tools (all `Latest`): [Python 3.13+](https://www.python.org), [epublib](https://epublib.readthedocs.io/en/stable/), [Beautiful Soup 4](https://pypi.org/project/beautifulsoup4/), [lxml](https://github.com/lxml/lxml), [ebook-convert](https://pypi.org/project/ebook-convert/), and [EPUBCheck](https://github.com/w3c/epubcheck/releases).
 
 ## Use
 
-> Use $blackflame to correct the title and verify that the chapters and reading order are unchanged.
+Invoke the skill naturally in your agent client:
 
-From the repository root, inspect a book, apply a reviewed plan, or verify a candidate prepared elsewhere.
+> Use $blackflame to fix the title, author, and ISBN of `book.epub` and verify that the chapters and reading order are unchanged.
 
-```sh
-python3 blackflame/scripts/skill.py run inspect book.epub > inventory.json
-python3 blackflame/scripts/skill.py run audit book.epub > audit.json
-python3 blackflame/scripts/skill.py run apply book.epub edited.epub --plan plan.json --report-dir apply-report
-python3 blackflame/scripts/skill.py run verify book.epub edited.epub \
-  --expected-changes scope.json --preserve-spine --report-dir verify-report
-```
+> Use $blackflame to remove the promotional page at the end of `book.epub`, check the cover dimensions for Apple Books, and validate with EPUBCheck.
 
-The editing guide defines both plan formats and explains how to read a validation result. For a migration, follow the EPUB 3 guide to check navigation, covers, and notes. [Editing guide](blackflame/references/editing.md) · [EPUB 3 guide](blackflame/references/epub3.md) · [Tool reference](blackflame/references/tools.md)
+> Use $blackflame to convert `draft.html` into an EPUB and verify it with EPUBCheck.
 
 ## Development
 
-Dependencies are managed with [uv](https://docs.astral.sh/uv/) (`pyproject.toml`, always following latest upstream versions). Sync the environment and run the test suite:
+Sync latest dependencies and run the test suite from the repository root:
 
 ```sh
-uv sync --upgrade --all-extras
-uv run --no-sync python -m unittest discover -s tests -v
+uv sync --project blackflame --upgrade
+uv run --project blackflame --no-sync python -m unittest discover -s tests -v
 ```
 
-With EPUBCheck on the path, the suite also builds an EPUB from scratch and exercises all three CLI commands. CI runs this workflow with EPUBCheck 5.4.0.
-
-Code quality and formatting are checked with [Ruff](https://github.com/astral-sh/ruff) (`ruff.toml`) and [Shuck](https://github.com/ewhauser/shuck) (`shuck.toml`):
+Code quality is checked with [Ruff](https://github.com/astral-sh/ruff) (`ruff.toml`) and [Shuck](https://github.com/ewhauser/shuck) (`shuck.toml`):
 
 ```sh
 ruff check .

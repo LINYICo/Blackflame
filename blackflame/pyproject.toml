@@ -1,0 +1,14 @@
+[project]
+name = "blackflame"
+version = "1.5.0"
+description = "Agent-first skill for EPUB metadata, editing, format conversion, and deterministic validation."
+requires-python = ">=3.13"
+dependencies = [
+    "epublib",
+    "beautifulsoup4",
+    "lxml",
+    "ebook-convert",
+]
+
+[tool.uv]
+package = false

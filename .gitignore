@@ -3,7 +3,9 @@ __pycache__/
 .DS_Store
 *.epub
 .venv/
+blackflame/.venv/
 .ruff_cache/
 .shuck_cache/
 uv.lock
+blackflame/uv.lock
 Blackflame.zip
