@@ -330,6 +330,59 @@ class EpubSafeVerificationTests(unittest.TestCase):
             self.assertEqual(report["inspected_reading_docs"], ["OPS/ch1.xhtml"])
             self.assertEqual(report["skipped_reading_docs"], ["OPS/nav.xhtml", "OPS/page.svg"])
 
+    def test_zip_directory_entries_do_not_cause_false_positives_or_mask_missing_files(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src_with_dirs = root / "with-dirs.epub"
+            no_dirs = root / "no-dirs.epub"
+            missing_file = root / "missing-file.epub"
+            base = root / "base.epub"
+            make_bilingual_epub3(base)
+
+            with ZipFile(base) as z_in, ZipFile(src_with_dirs, "w") as z_out:
+                z_out.writestr("mimetype", epub_safe.MEDIA_TYPE, compress_type=ZIP_STORED)
+                z_out.writestr("META-INF/", b"")
+                z_out.writestr("OPS/", b"")
+                for info in z_in.infolist():
+                    if info.filename != "mimetype":
+                        z_out.writestr(info, z_in.read(info))
+
+            # 1. Removing only explicit directory entries passes comparison
+            no_dirs.write_bytes(base.read_bytes())
+            diff = epub_safe.compare_epubs(
+                src_with_dirs,
+                no_dirs,
+                expected_added=set(),
+                expected_removed=set(),
+                expected_changed=set(),
+                preserve_spine=True,
+                preserve_text=True,
+            )
+            self.assertEqual(diff["removed"], [])
+
+            # 2. Removing a real file inside a directory fails comparison
+            with ZipFile(base) as z_in, ZipFile(missing_file, "w") as z_out:
+                for info in z_in.infolist():
+                    if info.filename != "OPS/figure.png":
+                        z_out.writestr(info, z_in.read(info))
+            with self.assertRaisesRegex(ValueError, "Removed members"):
+                epub_safe.compare_epubs(src_with_dirs, missing_file, expected_removed=set())
+
+            # 3. Surgical replacement works cleanly on an EPUB with explicit directory entries
+            edited = root / "edited-dirs.epub"
+            with ZipFile(src_with_dirs) as zf:
+                new_opf = zf.read("OPS/package.opf").replace(b"Sample", b"Updated", 1)
+            epub_safe.replace_members(src_with_dirs, edited, {"OPS/package.opf": new_opf})
+            epub_safe.compare_epubs(
+                src_with_dirs,
+                edited,
+                expected_changed={"OPS/package.opf"},
+                expected_added=set(),
+                expected_removed=set(),
+                preserve_spine=True,
+                preserve_text=True,
+            )
+
     def test_assert_no_new_diagnostics_blocks_regressions(self):
         before = epub_safe.Diagnostics("5.4.0", False, Counter({("WARNING", "W1", "msg", "a.xhtml", None): 1}))
         same = epub_safe.Diagnostics("5.4.0", False, Counter({("WARNING", "W1", "msg", "a.xhtml", None): 1}))

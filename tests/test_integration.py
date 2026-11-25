@@ -103,16 +103,22 @@ class RealToolIntegrationTests(unittest.TestCase):
     def test_epub2_and_epub3_surgical_body_editing_with_bs4_lxml(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
-            # 1. EPUB 3 surgical copyedit
+            # 1. EPUB 3 surgical copyedit on mixed-inline-tag paragraph (preserves <em> and footnote link)
             src3 = root / "book3.epub"
             out3 = root / "edited3.epub"
-            make_bilingual_epub3(src3, body_zh="这里有一个错别字需要修正。")
+            make_bilingual_epub3(src3, body_zh="这里有一个<em>错别字</em>需要修正。")
             with ZipFile(src3) as zf:
                 raw3 = zf.read("OPS/ch1.xhtml")
             soup3 = BeautifulSoup(raw3, "xml")
-            self.assertTrue(any("错别字" in p.get_text() for p in soup3.select("p")))
-            self.assertEqual(raw3.count("错别字".encode()), 1)
-            new3 = raw3.replace("错别字".encode(), "准确词".encode(), 1)
+            em_node = soup3.find("em")
+            self.assertIsNotNone(em_node)
+            for leaf in em_node.descendants:
+                if isinstance(leaf, str) and "错别字" in leaf:
+                    leaf.replace_with(str(leaf).replace("错别字", "准确词", 1))
+                    break
+            new3 = soup3.encode("utf-8")
+            self.assertIn(b"<em>", new3)
+            self.assertIn(b'href="#fn1"', new3)
             epub_safe.parse_xml(new3)
             epub_safe.replace_members(src3, out3, {"OPS/ch1.xhtml": new3})
             diff3 = epub_safe.compare_epubs(src3, out3, expected_changed={"OPS/ch1.xhtml"}, preserve_spine=True)
@@ -136,6 +142,88 @@ class RealToolIntegrationTests(unittest.TestCase):
                     a = epub_safe.run_epubcheck(o, root / f"{tag}-after.json")
                     epub_safe.assert_no_new_diagnostics(b, a)
                     self.assertFalse(a.has_errors)
+
+    def test_epub2_to_epub_latest_three_stage_migration_and_metadata_edit(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src2 = root / "legacy-v2.epub"
+            migrated = root / "migrated-latest.epub"
+            final_out = root / "final-latest.epub"
+            make_bilingual_epub2(src2, title="旧版测试书", body="保留原始正文段落。")
+            src_sha = epub_safe.sha256_file(src2)
+
+            # Stage 1 -> Stage 2: Fidelity migration EPUB 2 -> EPUB Latest (OPF 3.0 + nav + dcterms:modified, retain NCX)
+            nav_xhtml = (
+                f'<!DOCTYPE html><html xmlns="{epub_safe.XHTML}" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="zh-CN">'
+                '<head><meta charset="utf-8"/><title>Contents</title></head>'
+                '<body><nav epub:type="toc"><ol><li><a href="ch1.xhtml">Chapter 1</a></li></ol></nav></body></html>'
+            ).encode()
+            ch1_v3 = (
+                f'<!DOCTYPE html><html xmlns="{epub_safe.XHTML}" xml:lang="zh-CN">'
+                '<head><meta charset="utf-8"/><title>Chapter 1</title></head>'
+                "<body><h1>Chapter 1</h1><p>保留原始正文段落。</p></body></html>"
+            ).encode()
+            with ZipFile(src2) as z_in, ZipFile(migrated, "w") as z_out:
+                for info in z_in.infolist():
+                    if info.filename == "mimetype":
+                        z_out.writestr(info, epub_safe.MEDIA_TYPE)
+                    elif info.filename == "OEBPS/content.opf":
+                        opf = epub_safe.parse_xml(z_in.read(info))
+                        opf_root = opf.getroot()
+                        opf_root.set("version", "3.0")
+                        meta_el = opf_root.find(f"{{{epub_safe.OPF}}}metadata")
+                        mod = etree.SubElement(meta_el, f"{{{epub_safe.OPF}}}meta", property="dcterms:modified")
+                        mod.text = "2026-11-25T00:00:00Z"
+                        manifest = opf_root.find(f"{{{epub_safe.OPF}}}manifest")
+                        etree.SubElement(
+                            manifest,
+                            f"{{{epub_safe.OPF}}}item",
+                            id="nav",
+                            href="nav.xhtml",
+                            properties="nav",
+                            **{"media-type": "application/xhtml+xml"},
+                        )
+                        for item in manifest:
+                            if item.get("id") == "cov":
+                                item.set("properties", "cover-image")
+                        z_out.writestr(info, etree.tostring(opf, xml_declaration=True, encoding="utf-8"))
+                    elif info.filename == "OEBPS/ch1.xhtml":
+                        z_out.writestr(info, ch1_v3)
+                    else:
+                        z_out.writestr(info, z_in.read(info))
+                z_out.writestr("OEBPS/nav.xhtml", nav_xhtml)
+
+            # Verify Original source -> Migrated baseline (text, spine, cover, retained NCX)
+            mig_diff = epub_safe.compare_epubs(src2, migrated, preserve_spine=True, preserve_text=True)
+            self.assertEqual(mig_diff["added"], ["OEBPS/nav.xhtml"])
+            self.assertEqual(mig_diff["removed"], [])
+            with ZipFile(migrated) as zf:
+                self.assertIn("OEBPS/toc.ncx", zf.namelist())
+                self.assertEqual(epub_safe.image_dimensions(zf.read("OEBPS/cover.png")), (20, 30))
+
+            # Stage 2 -> Stage 3: Surgical OPF metadata edit on migrated baseline
+            with ZipFile(migrated) as zf:
+                opf = epub_safe.parse_xml(zf.read("OEBPS/content.opf"))
+            opf.find(".//{http://purl.org/dc/elements/1.1/}title").text = "新版核实书名"
+            epub_safe.replace_members(
+                migrated,
+                final_out,
+                {"OEBPS/content.opf": etree.tostring(opf, xml_declaration=True, encoding="utf-8")},
+            )
+            epub_safe.compare_epubs(
+                migrated,
+                final_out,
+                expected_changed={"OEBPS/content.opf"},
+                expected_added=set(),
+                expected_removed=set(),
+                preserve_spine=True,
+                preserve_text=True,
+            )
+            self.assertEqual(epub_safe.sha256_file(src2), src_sha)
+
+            if _epubcheck_available():
+                diag = epub_safe.run_epubcheck(final_out, root / "migrated-check.json")
+                self.assertFalse(diag.has_errors)
 
     def test_format_conversion_with_ebook_convert_retains_chapters_images_and_text(self):
         converter = shutil.which("ebook-convert") or str(Path(sys.executable).with_name("ebook-convert"))
@@ -235,7 +323,7 @@ class OfficialReleaseZipTests(unittest.TestCase):
                 license_text = zf.read("LICENSE").decode("utf-8")
                 self.assertIn("MIT License", license_text)
                 self.assertIn("Copyright", license_text)
-                forbidden = ("__pycache__", ".venv", "tests/", "skill.py", "runtime.py", "audit.py", "uv.lock")
+                forbidden = ("__pycache__", ".venv", "tests/", "skill.py", "runtime.py", "audit.py", "uv.lock", ".epub")
                 for name in names:
                     for marker in forbidden:
                         self.assertNotIn(marker, name, f"Forbidden entry in Blackflame.zip: {name}")

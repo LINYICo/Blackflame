@@ -1,3 +1,22 @@
+## v1.5.3 (2026-11-25)
+
+### EPUB Latest Policy & Default Workflow
+
+- Establish **EPUB Standard: Latest** (latest formal W3C EPUB Recommendation—currently EPUB 3.3, never draft specs; OPF remains `version="3.0"`) in `SKILL.md`, `README.md`, and `agents/openai.yaml`.
+- Define clear default workflows in `SKILL.md`: read-only inspection skips upgrades and EPUBCheck; editing legacy EPUB 2 books automatically migrates to EPUB Latest by default (preserving valid NCX, identifiers, and content) unless the user requests keeping EPUB 2; already-Latest EPUB 3 books avoid unnecessary repacking; conversions targeting EPUB default to EPUB Latest while non-EPUB targets output directly.
+- Clarify tool responsibilities across `lxml` (preferred for precision XML, OPF-only metadata edits, and fidelity migration), `epublib` (high-level EPUB 3 inspection/resource/structural work, not minimal OPF-only writes), `BeautifulSoup4` (leaf `NavigableString` inspection/editing on mixed-content paragraphs), `ebook-convert` (direct format conversion), and `EPUBCheck` (conformance validation).
+
+### Reference Guides, Fidelity & Conversion Quality
+
+- Update `references/editing.md` with a comprehensive EPUB 2 → EPUB Latest fidelity migration checklist (retaining valid NCX, preserving ISBNs/dates/copyright, checking CSS/fonts/SVG/MathML/footnotes/fixed-layout/media overlays, preferring `lxml`/`epublib` over full `ebook-convert` rebuilds).
+- Update `references/conversion.md` to require modern EPUB output (`--epub-version 3`, verified post-conversion) instead of silently emitting EPUB 2, require verified metadata on TXT/Markdown/HTML → EPUB conversions rather than guessing titles from body lines, and clarify lossy TXT round-trip limitations.
+- Update `references/metadata.md` and `references/validation.md` with the three-stage verification model (`Original source → Migrated baseline → Final output`) for migrated books and validator-capability matching rules.
+
+### Regression Tests & Real-World Verification
+
+- Add focused regression tests in `tests/test_epub_safe.py` and `tests/test_integration.py` for ZIP directory-entry handling (directory-only removal passes, real file removal fails, surgical replacement on archives with explicit directory entries succeeds), three-stage EPUB 2 → EPUB Latest migration + metadata editing, mixed-inline-tag body editing, and excluding `.epub` fixtures from `Blackflame.zip`.
+- Verified end-to-end against four real open-source EPUB test books (`accessible_epub_3.epub`, `childrens-literature.epub`, `basic-v3plus2.epub`, `minimal-v2.epub`) with verified source SHA-256 preservation.
+
 ## v1.5.2 (2026-11-25)
 
 ### Security & File Protection

@@ -8,6 +8,12 @@ Use this guide when inspecting, verifying, or editing bibliographic metadata and
 - **Distinguish print vs. EPUB ISBNs.** Keep the EPUB's primary package identifier (`unique-identifier`) and EPUB 2 NCX UID stable unless verified wrong. Store a print source ISBN in `dc:source` when the digital edition has no ISBN of its own.
 - **Preserve edition matter.** Retain `dc:rights`, attribution, existing IDs, attributes, and custom refinements unless explicitly authorized to change them.
 
+## Metadata Workflow by EPUB State
+
+- **Already EPUB Latest**: Use `lxml` + `epub_safe.replace_members()` for metadata-only edits so no unrelated file members change and no extra repacking occurs.
+- **EPUB 2 (default policy)**: First migrate the book to EPUB Latest (see [editing.md](editing.md)) into a temporary migrated baseline and verify migration fidelity, then apply the authorized OPF metadata edit on top of that baseline and verify the metadata diff separately. If the user explicitly asks to keep EPUB 2, edit only the OPF surgically and state that EPUB 2 was preserved.
+- **`epublib` role**: Use `epublib` for high-level EPUB 3 inspection, cover/resource management, or structural reconstruction—not as a minimal metadata-only editor, because `book.write()` also reserializes `META-INF/container.xml` and omits explicit ZIP directory entries.
+
 ## Minimal Metadata-Only Edit (Recommended: `lxml` + `epub_safe.replace_members`)
 
 Use surgical OPF replacement when only package metadata should change. Never assume the OPF is at `OPS/package.opf`—always resolve it from `META-INF/container.xml`:

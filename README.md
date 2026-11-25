@@ -4,7 +4,7 @@ An agent-first skill for e-book processing in Codex, Gemini, Claude Code, and ot
 
 ## Install
 
-Download `Blackflame.zip` from the [Blackflame Releases](https://github.com/LINYICo/Blackflame) (`v1.5.2`, see [v1.5.2 notes](releases/v1.5.2.md)) and extract the `blackflame/` folder into your client's skills directory (for Codex, `~/.agents/skills/`).
+Download `Blackflame.zip` from [Blackflame Releases](https://github.com/LINYICo/Blackflame) (`v1.5.3`, see [v1.5.3 notes](releases/v1.5.3.md)) and extract the `blackflame/` folder into your client's skills directory (for Codex, `~/.agents/skills/`).
 
 The skill includes its own `blackflame/pyproject.toml` (Python 3.13+, managed with [uv](https://docs.astral.sh/uv/)). Prepare dependencies inside the skill directory when needed:
 
@@ -15,10 +15,10 @@ uv sync --project /abs/path/to/blackflame
 ## Capabilities & Tech Stack
 
 - **Metadata**: Inspect, verify, and edit EPUB title, author, translator, ISBN, publisher, language, series, and cover artwork.
-- **Editing**: Proofread XHTML, fix typography, remove promotional inserts, repair TOC/navigation/footnotes, migrate EPUB 2 to EPUB 3, and optimize Apple Books compatibility.
-- **Conversion**: Convert e-book formats directly via the `ebook-convert` CLI.
+- **Editing**: Proofread XHTML, fix typography, remove promotional inserts, repair TOC/navigation/footnotes, automatically migrate EPUB 2 to EPUB Latest, and optimize Apple Books compatibility.
+- **Conversion**: Convert e-book formats directly via the `ebook-convert` CLI, defaulting EPUB outputs to EPUB Latest.
 
-Runtime tools (all `Latest`): [Python 3.13+](https://www.python.org), [epublib](https://epublib.readthedocs.io/en/stable/), [Beautiful Soup 4](https://pypi.org/project/beautifulsoup4/), [lxml](https://github.com/lxml/lxml), [ebook-convert](https://pypi.org/project/ebook-convert/), and [EPUBCheck](https://github.com/w3c/epubcheck/releases).
+Standards & runtime tools (all `Latest`): **EPUB Standard** (`Latest`, [W3C EPUB](https://www.w3.org/TR/epub/latest/)), [Python 3.13+](https://www.python.org), [epublib](https://epublib.readthedocs.io/en/stable/), [Beautiful Soup 4](https://pypi.org/project/beautifulsoup4/), [lxml](https://github.com/lxml/lxml), [ebook-convert](https://pypi.org/project/ebook-convert/), and [EPUBCheck](https://github.com/w3c/epubcheck/releases).
 
 ## Use
 

@@ -17,7 +17,15 @@ Passing one check never proves the others—report them separately:
 - **Establish the source baseline first.** Before editing an EPUB, run `epub_safe.run_epubcheck(source, before_report)` to record any pre-existing errors or warnings.
 - **Never introduce new diagnostics.** Compare before/after runs with `epub_safe.assert_no_new_diagnostics(before, after)`. Do not deliver an output as successfully validated if any new error, warning, or additional occurrence of an existing diagnostic was introduced.
 - **Never claim inherited errors are conformant.** If the source book already contained EPUBCheck errors that were not resolved, do not describe the output as fully conformant; report the inherited baseline clearly and obtain user acceptance when an existing source error must remain unresolved.
-- **Report incomplete validation transparently.** If `epubcheck` is unavailable, crashes, or produces an incomplete/truncated report, report validation as **incomplete** (never imply validation passed).
+- **Match validator capability to claimed standard.** Confirm the installed EPUBCheck version actually supports the claimed EPUB standard, and if `epubcheck` is unavailable, crashes, or produces an incomplete/truncated report, report validation as **incomplete**.
+
+## Three-Stage Comparison for Migrated EPUBs
+
+When upgrading a legacy EPUB (e.g., EPUB 2 → EPUB Latest) before applying user edits, separate verification into three stages using a temporary directory:
+
+1. **Original source → Migrated baseline**: Verify migration fidelity (body text preservation, spine order, images, identifiers, and navigation) without forcing an OPF-only member diff, since migration legitimately updates structural files.
+2. **Migrated baseline → Final output**: Verify the user's exact authorized edit scope (e.g., `expected_changed={opf_member}` for metadata-only edits).
+3. **Already-Latest EPUBs**: Compare Original source → Final output directly without creating an intermediate baseline.
 
 ## Actual Guarantees & Limitations of `scripts/epub_safe.py`
 
