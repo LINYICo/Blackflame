@@ -1,12 +1,10 @@
-# Release notes
+## v1.4.0 (2026-11-25)
 
-## v1.4.0 · 2026-11-25
-
-### Feature
+### Features
 
 - Rename the project, skill directory, environment variables, and documentation from `EpubLib` to `Blackflame`.
-- Detect Homebrew, Python 3.13+, `uv`, EPUBCheck, and Python dependencies on first use, reusing existing local tools to avoid duplicate installation.
-- Silently install only missing runtime components (Homebrew, Python, `uv`, EPUBCheck, and missing Python packages) on first use when no local runtime is present.
+- Detect Homebrew, Python 3.13+, `uv`, EPUBCheck, and Python libraries on first use, reusing existing local tools to avoid duplicate installation.
+- Silently install only missing runtime components (Homebrew, Python, `uv`, EPUBCheck, and missing Python packages) on first use when no local environment is present.
 
 ### Dependencies & Tooling
 
@@ -14,32 +12,30 @@
 - Remove all `EbookLib` references and standardize on `epublib`.
 - Add `ruff.toml` and `shuck.toml` configurations and integrate Ruff and Shuck checks into GitHub Actions CI.
 
-## [v1.3.0](https://github.com/LINYICo/Blackflame/releases/tag/v1.3.0) · 2026-11-22
+## v1.3.0 (2026-11-22)
 
-### Feature
+### Features
 
-- Detect installed EPUB tools and follow their package manager during monthly maintenance. Support Homebrew, uv, pip, and official EPUBCheck releases.
+- Detect installed EPUB tools and follow their package manager during monthly maintenance across Homebrew, `uv`, `pip`, and official EPUBCheck releases.
 
-### Fix
+### Fixes
 
-- Require explicit approval and an installation method for each set of missing dependencies. A saved preference no longer authorizes new installs.
+- Require explicit approval and an installation method for each set of missing dependencies so saved preferences do not authorize new installs unexpectedly.
 
-### Docs
+### Documentation
 
-- Match cover artwork to the ISBN, publisher, and edition. Compare original-resolution candidates and record the selected cover's source and dimensions.
+- Match cover artwork to the ISBN, publisher, and edition, comparing original-resolution candidates and recording the selected cover's source and dimensions.
 - Distinguish the print edition's ISBN from the EPUB's own identifier when updating bibliographic metadata.
 
-[Full changelog](https://github.com/LINYICo/Blackflame/compare/v1.2.0...v1.3.0)
+## v1.2.0 (2026-11-22)
 
-## [v1.2.0](https://github.com/LINYICo/Blackflame/releases/tag/v1.2.0) · 2026-11-22
+### Features
 
-### Feature
+- Add first-use setup for dependency installation and reading platform preferences, with monthly on-demand runtime refreshes.
+- Verify exact occurrence counts of reviewed text replacements via `text_edits`.
+- Verify approved ZIP member changes with `--expected-changes` and check XHTML body text preservation with `--preserve-text`.
 
-- Add first-use setup for dependency installation and reading platform preferences. Refresh the private runtime on demand once per calendar month.
-- Check the exact occurrence count of reviewed text replacements with `text_edits`.
-- Verify the approved ZIP member changes with `--expected-changes` and check that XHTML body text is preserved with `--preserve-text`.
-
-### Fix
+### Fixes
 
 - Preserve unresolved EPUB 2 named entities during XML comparison.
 - Require a fresh EPUBCheck report and verify that it identifies the publication being checked.
@@ -48,33 +44,29 @@
 
 - Add GitHub Actions coverage for the editing workflow, validator diagnostics, and monthly maintenance.
 
-[Full changelog](https://github.com/LINYICo/Blackflame/compare/v1.1.0...v1.2.0)
+## v1.1.0 (2026-11-21)
 
-## [v1.1.0](https://github.com/LINYICo/Blackflame/releases/tag/v1.1.0) · 2026-11-21
-
-### Feature
+### Features
 
 - Expand `inspect` to report publication metadata, the primary identifier, cover and navigation resources, and resolved spine entries.
-- Add `verify` for independently edited EPUBs. Use `--preserve-spine` to check chapter order, linear flags, and page progression.
+- Add `verify` for independently edited EPUBs, with `--preserve-spine` to check chapter order, linear flags, and page progression.
 
 ### Performance
 
 - Calculate source member digests during repack to avoid a separate read pass.
 
-### Docs
+### Documentation
 
 - Add guidance for EPUB 3 migration, Apple Books landmarks, semantic footnotes, and cover replacement.
 
-[Full changelog](https://github.com/LINYICo/Blackflame/compare/v1.0.0...v1.1.0)
+## v1.0.0 (2026-11-20)
 
-## [v1.0.0](https://github.com/LINYICo/Blackflame/releases/tag/v1.0.0) · 2026-11-20
+### Features
 
-### Feature
+- Publish the initial stable Agent Skill for inspecting and editing EPUB 2 and EPUB 3 publications.
+- Apply reviewed metadata and XHTML replacements to a separate EPUB and verify unchanged ZIP members.
+- Compare EPUBCheck diagnostics before and after editing, rejecting new warnings, errors, or additional occurrences of existing diagnostics.
 
-- Publish the first stable Agent Skill for inspecting and editing EPUB 2 and EPUB 3 books.
-- Apply reviewed metadata and XHTML replacements to a separate EPUB and verify the contents of unchanged ZIP members.
-- Compare EPUBCheck diagnostics before and after editing. Reject new warnings and errors, including additional occurrences of existing diagnostics.
+### Documentation
 
-### Docs
-
-- Provide English installation and editing guides and distribute the skill under the MIT License.
+- Provide English installation and editing guides under the MIT License.
