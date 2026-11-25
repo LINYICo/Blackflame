@@ -87,4 +87,8 @@ epub_safe.compare_epubs(
 
 ## Cover Replacement
 
-Cover replacement legitimately updates multiple files (image asset, OPF `properties="cover-image"` in EPUB 3 or `<meta name="cover" content="..."/>` in EPUB 2, and any cover XHTML). Match the cover to the exact edition/ISBN, prefer genuine high-resolution RGB JPEG/PNG, check `epub_safe.image_dimensions()` against Apple Books' 5.6M pixel limit, and verify spine and reading text via `compare_epubs()`.
+Cover replacement legitimately updates multiple files (image asset, OPF `properties="cover-image"` in EPUB 3 or `<meta name="cover" content="..."/>` in EPUB 2, and any cover XHTML). Match the cover to the exact edition/ISBN, prefer genuine high-resolution RGB JPEG/PNG, and check `epub_safe.image_dimensions()` against Apple Books' 5.6M pixel limit:
+
+- **Prefer `lxml` + `epub_safe.replace_members()`** when replacing an existing cover asset so untouched chapters and resources remain byte-identical.
+- **Guard against duplicate `cover-image` declarations.** When adding a new cover with `epublib` (`book.resources.add(img, is_cover=True)`), `epublib` may leave the `cover-image` property on the previous cover item—inspect the OPF manifest, clear any stale `cover-image` property so each OPF package has **at most one** valid `cover-image` declaration, and keep the old image file if chapters or other resources still reference it.
+- Verify cover XHTML references, manifest `media-type`, updated UTC `dcterms:modified`, spine/text fidelity via `compare_epubs()`, and final conformance via EPUBCheck.

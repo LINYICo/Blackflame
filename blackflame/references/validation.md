@@ -32,7 +32,7 @@ Delivery rules when EPUBCheck applies:
 
 Use a temporary directory to separate migration from user edits when upgrading legacy EPUBs (e.g., EPUB 2 → EPUB Latest):
 
-1. **Original source → Migrated baseline**: Verify body text preservation, spine order, images, identifiers, and navigation (do not require an OPF-only diff, since migration legitimately updates structural files).
+1. **Original source → Migrated baseline**: Verify body text preservation, spine order, images, identifiers, and navigation (do not require an OPF-only diff, since migration legitimately updates structural files and repairs defective legacy NCX entries). Confirm known migration/NCX errors are resolved without introducing new diagnostics, or report remaining unresolved issues transparently rather than claiming full conformance.
 2. **Migrated baseline → Final output**: Verify the user's exact authorized edit scope (e.g., `expected_changed={opf_member}` for metadata-only edits, or `{edited_member, opf_member}` when an EPUB 3 body/CSS edit also updates `dcterms:modified`, confirming no other unauthorized OPF changes).
 3. **Already-Latest EPUBs**: Compare Original source → Final output directly, allowing the OPF member alongside edited resources when `dcterms:modified` is updated and confirming the OPF contains no other unauthorized changes.
 

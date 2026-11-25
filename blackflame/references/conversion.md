@@ -22,14 +22,13 @@ uv run --project /abs/path/to/blackflame --no-sync ebook-convert source.txt outp
 uv run --project /abs/path/to/blackflame --no-sync ebook-convert source.epub output.txt
 ```
 
-2. Inspect source metadata first and reuse reliable values. For `TXT`, Markdown, or bare HTML inputs, pass verified `--title`, `--authors`, and `--language` so `ebook-convert` does not guess titles from body lines (such as `THE CONTENTS` or `Section 1`). Leave unverified fields unknown.
-3. Never treat `EPUB → TXT → EPUB` as lossless; if the original EPUB is available, restore verified metadata from it and note TXT's inherent loss of images, styling, TOC, and footnote semantics.
+2. **Preserve verified metadata & language precision.** Inspect source metadata first and reuse reliable values. For `TXT`, Markdown, or bare HTML inputs, pass verified `--title`, `--authors`, and `--language` so `ebook-convert` does not guess titles from body lines (such as `THE CONTENTS` or `Section 1`); leave unverified fields unknown and never guess regions or convert between Simplified and Traditional Chinese. Because `ebook-convert` may normalize tags (e.g., `zh-CN` → `zh`), check the output `dc:language` afterward and restore verified tags (`zh-Hans`, `zh-Hant`, `zh-CN`, `zh-TW`, `zh-HK`, etc.) via `lxml` + `epub_safe.replace_members()` while updating `dcterms:modified` and preserving legitimate local XHTML `lang`/`xml:lang` attributes.
+3. Never treat `EPUB → TXT → EPUB` or same-converter round-trips as lossless or independent quality proof; if the original EPUB is available, restore verified metadata from it and note TXT's inherent loss of images, styling, TOC, and footnote semantics.
 
-## Format-Appropriate Verification
+## Format-Appropriate Verification & Post-Conversion Fixes
 
-A `0` exit code alone never proves content survived cleanly. Verify according to what the source and target formats support:
+A `0` exit code alone never proves conversion succeeded. Verify according to what the source and target formats support:
 
-- **Integrity & body text**: Non-empty valid output; confirm paragraphs, headings, punctuation, and non-ASCII/CJK text survived without truncation or garbling.
-- **EPUB / DOCX outputs**: Check actual OPF `version` (for EPUB), title, author, language, cover/illustrations, and TOC links.
-- **TXT / lossy outputs**: Report absent images, styling, TOC, and embedded metadata as expected format limitations rather than automatic failure.
-- **EPUB outputs only**: Run `epub_safe.run_epubcheck()` on the generated EPUB using a fresh temporary report path and confirm the validator supports the target EPUB standard; never run EPUBCheck on non-EPUB sources or outputs ([validation.md](validation.md)).
+- **EPUB outputs only**: Confirm actual OPF `version` matches **EPUB Latest**, confirm EPUBCheck supports the target standard, verify body text, chapters, TOC, images, and key metadata, and run `epub_safe.run_epubcheck()` using a fresh temporary report path ([validation.md](validation.md)).
+  - **Targeted post-conversion fixes**: Converters (especially `AZW3`/`MOBI → EPUB 3`) can exit `0` while leaving fixable EPUBCheck errors—for example, stripping `epub:` prefixes into invalid bare `type="..."` attributes (`RSC-005`) or dropping `<html epub:prefix="z3998: ...">` declarations (`OPF-028`). Inspect the EPUBCheck JSON report and fix only flagged elements with `lxml` + `epub_safe.replace_members()`. Restore an invalid bare `type` to `epub:type` only when its original semantic intent is confirmed; never globally strip or rewrite legitimate HTML `type` attributes (`<link>`, `<script>`, `<style>`, `<ol>`, `<input>`, etc.), and treat sample-specific fixes as diagnostic patterns rather than blanket rules for every book. Update `dcterms:modified`, re-run EPUBCheck, and never report an EPUB with unresolved errors as fully conformant.
+- **Non-EPUB outputs (DOCX, MOBI, AZW3, TXT)**: File existence, non-empty size, and magic headers are only basic checks—inspect actual body text, headings, punctuation, CJK survival, images, and supported structure where possible, explicitly state any unverified aspects or lossy TXT limitations, and never run EPUBCheck on non-EPUB inputs or outputs.

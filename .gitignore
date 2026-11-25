@@ -9,3 +9,4 @@ blackflame/.venv/
 uv.lock
 blackflame/uv.lock
 Blackflame.zip
+/tests/Testfile/
