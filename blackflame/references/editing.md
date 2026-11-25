@@ -1,33 +1,33 @@
 # Content & Structural Editing
 
-Use this guide for proofreading, XHTML/CSS edits, ad removal, chapters, TOC, images, footnotes, EPUB 2 → EPUB 3 migration, and Apple Books optimization.
+Use this guide for proofreading, XHTML/CSS edits, promotional content removal, chapters, TOC, images, footnotes, EPUB 2 → EPUB 3 migration, and Apple Books optimization.
 
-## Choosing the Right Edit Path
+## Minimal Replacement vs. Broader Reconstruction
 
-- **Targeted text, CSS, or single-chapter edits (minimal diff):** Edit only the affected ZIP member(s) using `lxml` (or `BeautifulSoup(..., "xml")` for querying followed by strict XML verification) and write the new EPUB via `epub_safe.replace_members()`. This guarantees all untouched chapters, fonts, images, and ZIP ordering remain byte-identical.
-- **Broad EPUB 3 structural edits (renaming/adding/removing resources, regenerating TOC/landmarks, cover replacement):** Use `epublib` (`EPUB`, `book.resources`, `book.manifest`, `book.spine`, `book.nav`) and write to a separate output file, then verify with `epub_safe.compare_epubs()` and EPUBCheck.
+- **Minimal surgical replacement (`lxml` + `epub_safe.replace_members`)**: Use for targeted copyediting, CSS adjustments, or single-chapter fixes. Untouched chapters, images, fonts, and ZIP member ordering remain byte-identical.
+- **Broader EPUB 3 reconstruction (`epublib`)**: Use when adding, removing, or renaming resources, regenerating TOC/landmarks, or restructuring the manifest and spine. Always write to a new output file and verify exact added/removed/changed members with `epub_safe.compare_epubs()`.
 
-## Proofreading & Copyediting
+## Targeted Copyediting Checklist
 
-- Inspect context around every match before replacing; avoid blind global string replaces across XML tags or attributes.
-- Preserve XML declarations, encoding, DOCTYPE, comments, processing instructions, footnotes, attribution, and copyright notices.
-- When removing promotional inserts, verify whether promotional text shares a paragraph with book content (edit only the promotional span) and confirm no remaining links or manifest entries reference removed assets.
-- Keep existing anchor IDs (`id`, `xml:id`, `a/@name`) intact unless explicitly updating all incoming links and TOC/NCX targets.
+Before writing any text edit:
 
-## Images, Covers & CSS
+1. Inspect the original passage and surrounding XML context (`BeautifulSoup(raw, "xml")` for querying; `epub_safe.parse_xml()` for strict verification).
+2. Confirm the exact expected match count so a replacement cannot hit unintended occurrences.
+3. Verify the exact diff made—preserve XML declarations, namespaces, DOCTYPE, comments, processing instructions, footnotes, attribution, and copyright notices.
+4. Confirm all unrelated chapters and text remain unchanged (`epub_safe.compare_epubs(..., expected_changed={...}, preserve_spine=True)`).
 
-- Verify every `img/@src`, SVG `image/@href`, CSS `url(...)`, and `@import` resolves to an existing member inside the archive.
-- Confirm manifest `media-type` matches the actual image format (JPEG, PNG, GIF, SVG) and check pixel dimensions against Apple Books' 5.6 million pixel limit (`epub_safe.image_dimensions()`).
-- Remove remote font or tracking image declarations when local reader rendering suffices.
+When removing promotional inserts, check whether promotional copy shares a paragraph with book content (edit only the promotional span) and confirm no remaining links or manifest entries reference removed assets.
 
-## Footnotes & Navigation
+## Images, CSS & Footnotes
 
-- Keep footnotes readable as ordinary internal links. For Apple Books pop-up footnotes in EPUB 3, mark the reference with `epub:type="noteref"` and the target `aside` with `epub:type="footnote"`, preserving both note text and a working return link.
-- When multiple footnotes share duplicate IDs, match each reference to its note by marker text and surrounding context before assigning unique IDs.
-- Keep TOC hierarchy, labels, and fragment targets synchronized when renaming or reordering chapters.
+- Verify `img/@src`, SVG `image/@href`, CSS `url(...)`, and `@import` targets exist in the archive and match manifest `media-type`.
+- Probe embedded cover and illustration dimensions with `epub_safe.image_dimensions()` against Apple Books' 5.6 million pixel limit.
+- Keep footnotes readable as standard internal links; for Apple Books pop-ups in EPUB 3, pair `epub:type="noteref"` on the link with `epub:type="footnote"` on the target `aside` and preserve a working return link.
 
-## EPUB 2 to EPUB 3 Migration & Apple Books
+## EPUB 2 to EPUB 3 Migration
 
-- Set OPF `version="3.0"` and add UTC `dcterms:modified` while preserving primary identifier, edition metadata, spine order, and page progression.
-- Build an EPUB 3 Navigation Document (`properties="nav"`) with `<nav epub:type="toc">` preserving NCX hierarchy and targets.
-- For Apple Books, add `<nav epub:type="landmarks">` identifying the actual `cover` document and first chapter (`bodymatter`), preserve reflowable text sizing, and spot-check cover proportions, opening location, and note pop-ups in a target reader when possible.
+Migrating EPUB 2 to EPUB 3 is more than bumping `version="3.0"` and adding a TOC file. Check all required specification changes:
+
+- **Package document (OPF)**: Set `version="3.0"`, add UTC `<meta property="dcterms:modified">`, convert obsolete EPUB 2 OPF attributes (`opf:role`, `opf:file-as`, `opf:scheme`) to EPUB 3 `<meta refines="#...">` refinements, declare `properties="nav"` and `properties="cover-image"` on the respective manifest items, and keep the primary identifier intact.
+- **Navigation Document**: Create an XHTML5 Navigation Document with `<nav epub:type="toc">` preserving the full NCX hierarchy and fragment targets, plus `<nav epub:type="landmarks">` (`cover`, `bodymatter`) for Apple Books. Retain the NCX only if backward compatibility with EPUB 2 readers is requested (and keep its UID and targets synchronized).
+- **Content Documents**: Update XHTML 1.1 documents to valid XHTML5 (`<!DOCTYPE html>`, UTF-8, `xmlns="http://www.w3.org/1999/xhtml"`, `xmlns:epub="http://www.idpf.org/2007/ops"`), replace deprecated presentational attributes (`align`, `border`, `<center>`, `<font>`) with CSS, convert named HTML4 entities (`&nbsp;`, `&mdash;`) to numeric character references or UTF-8 characters (XML5/XHTML5 does not load external DTDs), and validate the result with EPUBCheck.

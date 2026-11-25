@@ -1,8 +1,10 @@
-"""Unit tests for Blackflame's deterministic safety and verification helpers (epub_safe.py)."""
+"""Unit and regression tests for Blackflame's deterministic safety helpers (epub_safe.py)."""
 
+import os
 import struct
 import sys
 import unittest
+import zlib
 from collections import Counter
 from io import BytesIO
 from pathlib import Path
@@ -15,21 +17,39 @@ sys.path.insert(0, str(SCRIPTS))
 import epub_safe
 
 
-def make_png(width: int, height: int, *, truncated: bool = False) -> bytes:
-    header = (
-        b"\x89PNG\r\n\x1a\n"
-        + struct.pack(">I", 13)
-        + b"IHDR"
-        + struct.pack(">II", width, height)
-        + b"\x08\x02\x00\x00\x00\x00\x00\x00\x00"
-    )
-    return header if truncated else header + struct.pack(">I", 0) + b"IEND\xaeB`\x82"
+def make_valid_png(width: int = 16, height: int = 24) -> bytes:
+    """Generate a genuinely valid, decodable RGB PNG using Python stdlib zlib + struct."""
+
+    def _chunk(tag: bytes, payload: bytes) -> bytes:
+        crc = zlib.crc32(tag + payload) & 0xFFFFFFFF
+        return struct.pack(">I", len(payload)) + tag + payload + struct.pack(">I", crc)
+
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    raw_rows = b"".join(b"\x00" + (b"\x40\x80\xc0" * width) for _ in range(height))
+    idat = zlib.compress(raw_rows)
+    return b"\x89PNG\r\n\x1a\n" + _chunk(b"IHDR", ihdr) + _chunk(b"IDAT", idat) + _chunk(b"IEND", b"")
 
 
-def make_epub3(path: Path, *, title: str = "Sample Book", body: str = "Original paragraph.") -> None:
+def make_bilingual_epub3(
+    path: Path,
+    *,
+    title: str = "Sample 双语测试书",
+    body_en: str = "Original English paragraph.",
+    body_zh: str = "这是原始中文正文段落。",
+    code_block: str = "def demo():\n    return 42",
+) -> None:
+    """Build a valid, reusable bilingual EPUB 3 fixture with genuine PNG cover/image, footnotes, and <pre>."""
     chapter = (
-        f'<html xmlns="{epub_safe.XHTML}" xml:lang="en"><head><title>Chapter 1</title></head>'
-        f"<body><h1>Chapter 1</h1><p>{body}</p></body></html>"
+        f'<html xmlns="{epub_safe.XHTML}" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="zh-CN">'
+        "<head><title>Chapter 1 第一章</title></head>"
+        "<body>"
+        "<h1>Chapter 1 第一章</h1>"
+        f"<p>{body_en}</p>"
+        f'<p>{body_zh}<a id="ref1" epub:type="noteref" href="#fn1">[1]</a></p>'
+        f"<pre>{code_block}</pre>"
+        '<p><img src="figure.png" alt="Figure 1"/></p>'
+        '<aside id="fn1" epub:type="footnote"><p>Footnote text 脚注内容 <a href="#ref1">↩</a></p></aside>'
+        "</body></html>"
     )
     with ZipFile(path, "w") as archive:
         archive.writestr("mimetype", epub_safe.MEDIA_TYPE, compress_type=ZIP_STORED)
@@ -41,36 +61,90 @@ def make_epub3(path: Path, *, title: str = "Sample Book", body: str = "Original 
         )
         archive.writestr(
             "OPS/package.opf",
-            f'<package xmlns="{epub_safe.OPF}" version="3.0" unique-identifier="pub-id" xml:lang="en">'
+            f'<package xmlns="{epub_safe.OPF}" version="3.0" unique-identifier="pub-id" xml:lang="zh-CN">'
             '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
             f"<dc:title>{title}</dc:title>"
-            "<dc:creator>Author Name</dc:creator>"
+            "<dc:creator>Test Author 测试作者</dc:creator>"
             '<dc:identifier id="pub-id">urn:uuid:12345678-1234-5678-1234-567812345678</dc:identifier>'
-            "<dc:language>en</dc:language>"
+            "<dc:language>zh-CN</dc:language>"
+            "<dc:rights>Copyright 2026 Test Fixture</dc:rights>"
             '<meta property="dcterms:modified">2026-11-25T00:00:00Z</meta>'
             "</metadata>"
             "<manifest>"
             '<item id="nav" href="nav.xhtml" properties="nav" media-type="application/xhtml+xml"/>'
             '<item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>'
             '<item id="cov" href="cover.png" properties="cover-image" media-type="image/png"/>'
+            '<item id="fig" href="figure.png" media-type="image/png"/>'
             "</manifest>"
             '<spine><itemref idref="ch1"/></spine></package>',
         )
         archive.writestr(
             "OPS/nav.xhtml",
-            f'<html xmlns="{epub_safe.XHTML}" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="en">'
-            "<head><title>Contents</title></head>"
-            '<body><nav epub:type="toc"><ol><li><a href="ch1.xhtml">Chapter 1</a></li></ol></nav></body></html>',
+            f'<html xmlns="{epub_safe.XHTML}" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="zh-CN">'
+            "<head><title>Contents 目录</title></head>"
+            '<body><nav epub:type="toc"><ol><li><a href="ch1.xhtml">Chapter 1 第一章</a></li></ol></nav>'
+            "</body></html>",
         )
         archive.writestr("OPS/ch1.xhtml", chapter)
-        archive.writestr("OPS/cover.png", make_png(800, 1200))
+        archive.writestr("OPS/cover.png", make_valid_png(24, 36))
+        archive.writestr("OPS/figure.png", make_valid_png(16, 16))
+
+
+def make_bilingual_epub2(path: Path, *, title: str = "EPUB 2 测试书", body: str = "第二版测试正文。") -> None:
+    """Build a valid EPUB 2 fixture with NCX navigation and cover metadata."""
+    chapter = (
+        '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">'
+        f'<html xmlns="{epub_safe.XHTML}" xml:lang="zh-CN">'
+        f"<head><title>Chapter 1</title></head><body><h1>Chapter 1</h1><p>{body}</p></body></html>"
+    )
+    with ZipFile(path, "w") as archive:
+        archive.writestr("mimetype", epub_safe.MEDIA_TYPE, compress_type=ZIP_STORED)
+        archive.writestr(
+            epub_safe.CONTAINER,
+            '<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+            '<rootfiles><rootfile full-path="OEBPS/content.opf" '
+            'media-type="application/oebps-package+xml"/></rootfiles></container>',
+        )
+        archive.writestr(
+            "OEBPS/content.opf",
+            f'<package xmlns="{epub_safe.OPF}" version="2.0" unique-identifier="uid">'
+            '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+            f"<dc:title>{title}</dc:title>"
+            "<dc:creator>Author</dc:creator>"
+            '<dc:identifier id="uid">urn:uuid:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee</dc:identifier>'
+            "<dc:language>zh-CN</dc:language>"
+            '<meta name="cover" content="cov"/>'
+            "</metadata>"
+            "<manifest>"
+            '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>'
+            '<item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>'
+            '<item id="cov" href="cover.png" media-type="image/png"/>'
+            "</manifest>"
+            '<spine toc="ncx"><itemref idref="ch1"/></spine></package>',
+        )
+        archive.writestr(
+            "OEBPS/toc.ncx",
+            '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">'
+            '<head><meta name="dtb:uid" content="urn:uuid:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"/>'
+            '<meta name="dtb:depth" content="1"/><meta name="dtb:totalPageCount" content="0"/>'
+            '<meta name="dtb:maxPageNumber" content="0"/></head>'
+            f"<docTitle><text>{title}</text></docTitle>"
+            '<navMap><navPoint id="np-1" playOrder="1"><navLabel><text>Chapter 1</text></navLabel>'
+            '<content src="ch1.xhtml"/></navPoint></navMap></ncx>',
+        )
+        archive.writestr("OEBPS/ch1.xhtml", chapter)
+        archive.writestr("OEBPS/cover.png", make_valid_png(20, 30))
 
 
 class EpubSafeSecurityTests(unittest.TestCase):
-    def test_xml_external_entity_not_resolved(self):
+    def test_xml_external_entity_and_limit_enforced(self):
         xxe = b'<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><root>&xxe;</root>'
         tree = epub_safe.parse_xml(xxe)
         self.assertNotIn("root:", tree.getroot().text or "")
+
+        oversized = b"<r>" + (b"x" * (epub_safe.LIMIT_XML + 1)) + b"</r>"
+        with self.assertRaisesRegex(ValueError, "exceeds size limit"):
+            epub_safe.parse_xml(oversized)
 
     def test_zip_rejects_traversal_invalid_mimetype_duplicates_and_corruption(self):
         for member, mime in [("../escape.xhtml", epub_safe.MEDIA_TYPE), ("ch.xhtml", b"invalid")]:
@@ -97,14 +171,12 @@ class EpubSafeSecurityTests(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             src = root / "source.epub"
-            make_epub3(src)
+            make_bilingual_epub3(src)
             original_sha = epub_safe.sha256_file(src)
 
-            # Never overwrite existing file
-            with self.assertRaisesRegex(ValueError, "already exists"):
+            with self.assertRaisesRegex(ValueError, "must not overwrite"):
                 epub_safe.replace_members(src, src, {"OPS/ch1.xhtml": b"x"})
 
-            # Refuse protected publication containing signatures.xml
             protected = root / "signed.epub"
             with ZipFile(src) as z_in, ZipFile(protected, "w") as z_out:
                 for info in z_in.infolist():
@@ -115,32 +187,102 @@ class EpubSafeSecurityTests(unittest.TestCase):
 
             self.assertEqual(epub_safe.sha256_file(src), original_sha)
 
+    def test_run_epubcheck_refuses_report_or_log_overwriting_source(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "book.epub"
+            make_bilingual_epub3(src)
+            original_sha = epub_safe.sha256_file(src)
+
+            # Direct path collision
+            with self.assertRaisesRegex(ValueError, "must not overwrite"):
+                epub_safe.run_epubcheck(src, src)
+
+            # Symlink collision
+            sym = root / "alias.json"
+            sym.symlink_to(src)
+            with self.assertRaisesRegex(ValueError, "must not overwrite|same file"):
+                epub_safe.run_epubcheck(src, sym)
+
+            # Hardlink collision
+            hard = root / "hard.json"
+            os.link(src, hard)
+            with self.assertRaisesRegex(ValueError, "same file"):
+                epub_safe.run_epubcheck(src, hard)
+
+            # .log sidecar collision when source is named book.log
+            log_src = root / "book.log"
+            make_bilingual_epub3(log_src)
+            with self.assertRaisesRegex(ValueError, "must not overwrite"):
+                epub_safe.run_epubcheck(log_src, root / "book.json")
+
+            self.assertEqual(epub_safe.sha256_file(src), original_sha)
+
 
 class EpubSafeVerificationTests(unittest.TestCase):
-    def test_image_dimensions_and_apple_limit(self):
-        self.assertEqual(epub_safe.image_dimensions(make_png(1000, 1500)), (1000, 1500))
-        self.assertIsNone(epub_safe.image_dimensions(make_png(1000, 1500, truncated=True)))
+    def test_image_dimensions_probe(self):
+        self.assertEqual(epub_safe.image_dimensions(make_valid_png(24, 36)), (24, 36))
+        self.assertIsNone(epub_safe.image_dimensions(make_valid_png(24, 36)[:-12]))  # truncated
         self.assertGreater(3000 * 2000, epub_safe.APPLE_MAX_IMAGE_PIXELS)
 
-    def test_compare_epubs_detects_text_and_scope_changes(self):
+    def test_unresolved_spine_reference_fails_fidelity_check(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "good.epub"
+            bad = root / "bad-spine.epub"
+            make_bilingual_epub3(src)
+            with ZipFile(src) as zf:
+                opf = zf.read("OPS/package.opf").replace(b'idref="ch1"', b'idref="nonexistent"')
+            epub_safe.replace_members(src, bad, {"OPS/package.opf": opf})
+
+            with self.assertRaisesRegex(ValueError, "Unresolved spine idref"):
+                epub_safe.compare_epubs(src, bad, preserve_spine=True, preserve_text=True)
+
+    def test_paragraph_boundary_and_preformatted_whitespace_changes_detected(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             src = root / "src.epub"
-            out = root / "out.epub"
-            make_epub3(src, body="Hello world.")
+            merged_para = root / "merged.epub"
+            ws_changed = root / "ws.epub"
+            make_bilingual_epub3(src, body_en="Alpha", body_zh="Beta", code_block="x = 1\n    y = 2")
+
             with ZipFile(src) as zf:
                 ch1 = zf.read("OPS/ch1.xhtml")
-            epub_safe.replace_members(src, out, {"OPS/ch1.xhtml": ch1.replace(b"world", b"Blackflame")})
 
-            report = epub_safe.compare_epubs(src, out, expected_changed={"OPS/ch1.xhtml"}, preserve_spine=True)
-            self.assertEqual(report["changed"], ["OPS/ch1.xhtml"])
-            self.assertTrue(report["spine_unchanged"])
+            # Merge two <p> blocks into one without altering flat text concatenation.
+            merged = ch1.replace(b"<p>Alpha</p><p>Beta", b"<p>Alpha Beta")
+            epub_safe.replace_members(src, merged_para, {"OPS/ch1.xhtml": merged})
+            with self.assertRaisesRegex(ValueError, "Reading text or block structure changed"):
+                epub_safe.compare_epubs(src, merged_para, preserve_text=True)
 
-            with self.assertRaisesRegex(ValueError, "Reading text changed"):
-                epub_safe.compare_epubs(src, out, preserve_text=True)
+            # Change indentation inside <pre> block.
+            changed_pre = ch1.replace(b"    y = 2", b"  y = 2")
+            epub_safe.replace_members(src, ws_changed, {"OPS/ch1.xhtml": changed_pre})
+            with self.assertRaisesRegex(ValueError, "Reading text or block structure changed"):
+                epub_safe.compare_epubs(src, ws_changed, preserve_text=True)
 
-            with self.assertRaisesRegex(ValueError, "authorized scope"):
-                epub_safe.compare_epubs(src, out, expected_changed=set())
+    def test_compare_epubs_supports_expected_added_removed_changed(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "src.epub"
+            cand = root / "cand.epub"
+            make_bilingual_epub3(src)
+            with ZipFile(src) as z_in, ZipFile(cand, "w") as z_out:
+                for info in z_in.infolist():
+                    if info.filename == "OPS/figure.png":
+                        continue
+                    z_out.writestr(info, z_in.read(info))
+                z_out.writestr("OPS/figure2.png", make_valid_png(16, 16))
+
+            report = epub_safe.compare_epubs(
+                src,
+                cand,
+                expected_added={"OPS/figure2.png"},
+                expected_removed={"OPS/figure.png"},
+                expected_changed=set(),
+            )
+            self.assertEqual(report["added"], ["OPS/figure2.png"])
+            self.assertEqual(report["removed"], ["OPS/figure.png"])
 
     def test_assert_no_new_diagnostics_blocks_regressions(self):
         before = epub_safe.Diagnostics("5.4.0", False, Counter({("WARNING", "W1", "msg", "a.xhtml", None): 1}))

@@ -38,20 +38,59 @@ jobs:
           distribution: temurin
           java-version: "21"
       - name: Sync latest dependencies
-        run: uv sync --project blackflame --upgrade
-      - name: Install EPUBCheck 5.4.0
-        shell: bash
         run: |
-          cd "$RUNNER_TEMP"
-          curl --fail --location --retry 3 -o epubcheck.zip https://github.com/w3c/epubcheck/releases/download/v5.4.0/epubcheck-5.4.0.zip
-          python3 -c 'import hashlib, pathlib, sys; expected = "33350c61038e71dfb3d45a76aed04bf5481e6d5500cb780f6e98db8bbd15a28c"; actual = hashlib.sha256(pathlib.Path("epubcheck.zip").read_bytes()).hexdigest(); sys.exit(0 if actual == expected else f"SHA-256 mismatch: {actual}")'
-          unzip -q epubcheck.zip
-          printf '#!/bin/sh\nexec java -jar "%s/epubcheck-5.4.0/epubcheck.jar" "$@"\n' "$RUNNER_TEMP" > epubcheck
-          chmod +x epubcheck
+          uv sync --project blackflame --upgrade
+          uv run --project blackflame --no-sync python --version
+          uv pip list --python blackflame/.venv
+      - name: Install latest official EPUBCheck (SHA-256 verified)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import pathlib
+          import shutil
+          import urllib.request
+          import zipfile
+
+          dest = pathlib.Path(os.environ["RUNNER_TEMP"])
+          headers = {"Accept": "application/vnd.github+json", "User-Agent": "blackflame-ci"}
+          if token := os.environ.get("GH_TOKEN"):
+              headers["Authorization"] = f"Bearer {token}"
+          req = urllib.request.Request("https://api.github.com/repos/w3c/epubcheck/releases/latest", headers=headers)
+          with urllib.request.urlopen(req, timeout=45) as resp:
+              release = json.load(resp)
+          tag = release["tag_name"]
+          name = f"epubcheck-{tag.removeprefix('v')}"
+          asset = next(a for a in release["assets"] if a["name"] == f"{name}.zip")
+          digest = asset.get("digest") or ""
+          if not digest.startswith("sha256:"):
+              raise SystemExit(f"Missing official SHA-256 digest for {asset['name']}: {digest!r}")
+          expected = digest.removeprefix("sha256:")
+          bundle = dest / "epubcheck.zip"
+          dl_req = urllib.request.Request(asset["browser_download_url"], headers=headers)
+          with urllib.request.urlopen(dl_req, timeout=120) as resp, bundle.open("wb") as out:
+              shutil.copyfileobj(resp, out)
+          actual = hashlib.sha256(bundle.read_bytes()).hexdigest()
+          if actual != expected:
+              raise SystemExit(f"EPUBCheck SHA-256 mismatch: expected {expected}, got {actual}")
+          with zipfile.ZipFile(bundle) as zf:
+              zf.extractall(dest)
+          launcher = dest / "epubcheck"
+          launcher.write_text(f'#!/bin/sh\nexec java -jar "{dest / name / "epubcheck.jar"}" "$@"\n', encoding="utf-8")
+          launcher.chmod(0o755)
+          print(f"Installed official EPUBCheck {tag} (sha256 verified)")
+          PY
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
-      - name: Run test suite
+      - name: Build official release archive and run test suite
         env:
           BLACKFLAME_REQUIRE_EPUBCHECK: "1"
+          BLACKFLAME_REQUIRE_RELEASE_ZIP: "1"
         run: |
           epubcheck --version
+          rm -f Blackflame.zip
+          zip -r Blackflame.zip blackflame -x "blackflame/.venv/*" "blackflame/uv.lock" "*/__pycache__/*" "*.pyc" "*.DS_Store"
           uv run --project blackflame --no-sync python -m unittest discover -s tests -v

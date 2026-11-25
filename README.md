@@ -4,7 +4,7 @@ An agent-first skill for e-book processing in Codex, Gemini, Claude Code, and ot
 
 ## Install
 
-Download `Blackflame.zip` from the `v1.5.0` GitHub Release and extract the `blackflame/` folder into your client's skills directory (for Codex, `~/.agents/skills/`).
+Download `Blackflame.zip` from the `v1.5.1` release page (`LINYICo/Blackflame/releases/download/v1.5.1/Blackflame.zip`) and extract the `blackflame/` folder into your client's skills directory (for Codex, `~/.agents/skills/`).
 
 The skill includes its own `blackflame/pyproject.toml` (Python 3.13+, managed with [uv](https://docs.astral.sh/uv/)). Prepare dependencies inside the skill directory when needed:
 

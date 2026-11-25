@@ -23,12 +23,51 @@ CONTAINER = "META-INF/container.xml"
 MEDIA_TYPE = b"application/epub+zip"
 OPF = "http://www.idpf.org/2007/opf"
 XHTML = "http://www.w3.org/1999/xhtml"
+XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 PROTECTION = frozenset({"META-INF/encryption.xml", "META-INF/rights.xml", "META-INF/signatures.xml"})
 APPLE_MAX_IMAGE_PIXELS = 5_600_000
 LIMIT_MEMBER = 256 * 1024**2
 LIMIT_TOTAL = 2 * 1024**3
 LIMIT_XML = 16 * 1024**2
 CHUNK_SIZE = 1024**2
+
+_BLOCK_TAGS = frozenset(
+    {
+        "address",
+        "article",
+        "aside",
+        "blockquote",
+        "br",
+        "dd",
+        "div",
+        "dl",
+        "dt",
+        "figcaption",
+        "figure",
+        "footer",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "header",
+        "hr",
+        "li",
+        "main",
+        "nav",
+        "ol",
+        "p",
+        "pre",
+        "section",
+        "table",
+        "td",
+        "th",
+        "tr",
+        "ul",
+    }
+)
+_PREFORMATTED_TAGS = frozenset({"pre", "code", "textarea"})
 
 
 class Diagnostics(NamedTuple):
@@ -42,8 +81,21 @@ def _require(condition: bool, message: str) -> None:
         raise ValueError(message)
 
 
+def _ensure_distinct_destination(source: Path, destination: Path, label: str) -> None:
+    """Reject any output, report, or log path that resolves or links to the source file."""
+    src_resolved = source.resolve()
+    dst_resolved = destination.resolve()
+    _require(dst_resolved != src_resolved, f"{label} path must not overwrite the source EPUB: {destination}")
+    if os.path.lexists(destination) and destination.exists():
+        _require(
+            not os.path.samefile(source, destination),
+            f"{label} path refers to the same file as the source EPUB: {destination}",
+        )
+
+
 def parse_xml(data: bytes) -> etree._ElementTree:
-    """Strictly parse XML/XHTML with external entities and network DTD loading disabled."""
+    """Strictly parse XML/XHTML within LIMIT_XML with external entities and network DTD loading disabled."""
+    _require(len(data) <= LIMIT_XML, f"XML payload exceeds size limit ({LIMIT_XML} bytes)")
     parser = etree.XMLParser(
         no_network=True,
         load_dtd=False,
@@ -53,6 +105,11 @@ def parse_xml(data: bytes) -> etree._ElementTree:
         huge_tree=False,
     )
     return etree.parse(BytesIO(data), parser)
+
+
+def _read_xml_member(archive: ZipFile, name: str) -> bytes:
+    _require(archive.getinfo(name).file_size <= LIMIT_XML, f"XML member exceeds size limit: {name}")
+    return archive.read(name)
 
 
 def safe_member(name: str) -> bool:
@@ -128,8 +185,56 @@ def _resolve_href(package_member: str, href: str) -> str | None:
     return member
 
 
+def _extract_structured_text(element: etree._Element, preserve_ws: bool = False) -> list[tuple[str, bool]]:
+    """Extract (text, is_preformatted) tokens preserving block boundaries and preformatted whitespace."""
+    tokens: list[tuple[str, bool]] = []
+    if not isinstance(element.tag, str):
+        return tokens
+    local = etree.QName(element).localname.lower()
+    is_block = local in _BLOCK_TAGS
+    is_pre = preserve_ws or local in _PREFORMATTED_TAGS or element.get(XML_SPACE) == "preserve"
+
+    if is_block:
+        tokens.append(("\n", False))
+    if element.text:
+        text = element.text if is_pre else re.sub(r"[ \t\r\n]+", " ", element.text)
+        tokens.append((text, is_pre))
+    for child in element:
+        tokens.extend(_extract_structured_text(child, preserve_ws=is_pre))
+        if child.tail:
+            tail = child.tail if is_pre else re.sub(r"[ \t\r\n]+", " ", child.tail)
+            tokens.append((tail, is_pre))
+    if is_block:
+        tokens.append(("\n", False))
+    return tokens
+
+
+def _hash_reading_text(body: etree._Element) -> str:
+    parts: list[str] = []
+    buf: list[str] = []
+
+    def _flush_normal() -> None:
+        if not buf:
+            return
+        for line in "".join(buf).split("\n"):
+            stripped = line.strip(" ")
+            if stripped:
+                parts.append(stripped)
+        buf.clear()
+
+    for text, is_pre in _extract_structured_text(body):
+        if is_pre:
+            _flush_normal()
+            parts.append(f"\x1f{text}\x1f")
+        else:
+            buf.append(text)
+    _flush_normal()
+    canonical = "\n".join(parts)
+    return sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def _spine_and_docs(archive: ZipFile, names: set[str]) -> tuple[list, dict[str, str]]:
-    container = parse_xml(archive.read(CONTAINER))
+    container = parse_xml(_read_xml_member(archive, CONTAINER))
     rootfiles = container.xpath(
         "/c:container/c:rootfiles/c:rootfile[@media-type='application/oebps-package+xml']/@full-path",
         namespaces={"c": "urn:oasis:names:tc:opendocument:xmlns:container"},
@@ -139,7 +244,7 @@ def _spine_and_docs(archive: ZipFile, names: set[str]) -> tuple[list, dict[str, 
     text_hashes: dict[str, str] = {}
     for pkg in rootfiles:
         _require(pkg in names and not pkg.endswith("/"), f"Missing OPF package: {pkg}")
-        root = parse_xml(archive.read(pkg)).getroot()
+        root = parse_xml(_read_xml_member(archive, pkg)).getroot()
         manifest = root.findall(f"{{{OPF}}}manifest/{{{OPF}}}item")
         id_to_member: dict[str, str | None] = {}
         xhtml_docs: set[str] = set()
@@ -153,17 +258,26 @@ def _spine_and_docs(archive: ZipFile, names: set[str]) -> tuple[list, dict[str, 
                 if "nav" in item.get("properties", "").split():
                     nav_docs.add(member)
         spine = root.find(f"{{{OPF}}}spine")
-        itemrefs = [] if spine is None else spine.findall(f"{{{OPF}}}itemref")
-        seq = [(id_to_member.get(ref.get("idref", "")), ref.get("linear", "yes")) for ref in itemrefs]
-        direction = spine.get("page-progression-direction", "default") if spine is not None else None
+        _require(spine is not None, f"Missing spine in OPF package: {pkg}")
+        itemrefs = spine.findall(f"{{{OPF}}}itemref")
+        _require(bool(itemrefs), f"Empty spine in OPF package: {pkg}")
+        seq = []
+        for ref in itemrefs:
+            idref = ref.get("idref", "")
+            _require(bool(idref) and idref in id_to_member, f"Unresolved spine idref: {idref!r}")
+            member = id_to_member[idref]
+            _require(bool(member) and member in names, f"Missing spine resource: {member!r}")
+            linear = ref.get("linear", "yes")
+            _require(linear in {"yes", "no"}, f"Invalid spine linear flag: {linear!r}")
+            seq.append((member, linear))
+        direction = spine.get("page-progression-direction", "default")
         spines.append((pkg, direction, seq))
         for member, _ in seq:
-            if not member or member not in xhtml_docs or member in nav_docs or member in text_hashes:
+            if member not in xhtml_docs or member in nav_docs or member in text_hashes:
                 continue
-            body = parse_xml(archive.read(member)).getroot().find(f"{{{XHTML}}}body")
+            body = parse_xml(_read_xml_member(archive, member)).getroot().find(f"{{{XHTML}}}body")
             _require(body is not None, f"Missing XHTML body: {member}")
-            normalized = re.sub(r"[ \t\r\n]+", " ", "".join(body.itertext())).strip(" ")
-            text_hashes[member] = sha256(normalized.encode("utf-8")).hexdigest()
+            text_hashes[member] = _hash_reading_text(body)
     return spines, text_hashes
 
 
@@ -174,10 +288,11 @@ def replace_members(
     *,
     allow_protected: bool = False,
 ) -> dict:
-    """Surgically replace specified ZIP members into a new EPUB while verifying all other members stay identical."""
+    """Surgically replace named ZIP members into a new EPUB while verifying all member SHA-256 digests."""
     _require(source.is_file(), "Source EPUB must be a regular file")
     _require(output.suffix.lower() == ".epub", "Output must have an .epub extension")
-    _require(not os.path.lexists(output), "Output file already exists; never overwrite the source")
+    _ensure_distinct_destination(source, output, "Output")
+    _require(not os.path.lexists(output), "Output file already exists; never overwrite an existing file")
     _require(bool(replacements), "Replacements mapping must not be empty")
     source_digest = sha256_file(source)
 
@@ -211,6 +326,11 @@ def replace_members(
             check_zip(out_zip, stream)
             after = archive_hashes(out_zip)
 
+        for name, expected_bytes in replacements.items():
+            _require(
+                after[name] == sha256(expected_bytes).hexdigest(),
+                f"Written member digest does not match requested bytes: {name}",
+            )
         actual_changed = {name for name in before if before[name] != after[name]}
         expected_changed = {name for name, data in replacements.items() if sha256(data).hexdigest() != before[name]}
         _require(actual_changed == expected_changed, "Archive member changes differ from requested replacements")
@@ -232,10 +352,12 @@ def compare_epubs(
     candidate: Path,
     *,
     expected_changed: set[str] | None = None,
+    expected_added: set[str] | None = None,
+    expected_removed: set[str] | None = None,
     preserve_spine: bool = False,
     preserve_text: bool = False,
 ) -> dict:
-    """Compare source and edited EPUBs for ZIP member diffs, spine order, and reading text fidelity."""
+    """Compare source and candidate EPUBs for ZIP diffs, spine order, and structured reading text hashes."""
     _require(source.is_file() and candidate.is_file(), "Source and candidate must be regular files")
     _require(not source.samefile(candidate), "Source and candidate must be different files")
 
@@ -265,19 +387,34 @@ def compare_epubs(
         report["spine_unchanged"] = src_spine == cand_spine
         _require(report["spine_unchanged"], "Reading order or page progression changed")
     if preserve_text:
+        _require(
+            bool(src_text) and bool(cand_text),
+            "No inspectable spine XHTML reading documents found for text fidelity check",
+        )
         text_changes = sorted(m for m in src_text.keys() | cand_text.keys() if src_text.get(m) != cand_text.get(m))
         report["reading_text_changes"] = text_changes
-        _require(not text_changes, f"Reading text changed in: {', '.join(text_changes)}")
-    if expected_changed is not None:
+        _require(not text_changes, f"Reading text or block structure changed in: {', '.join(text_changes)}")
+    if expected_added is not None:
+        _require(set(added) == expected_added, f"Added members {added} differ from expected {sorted(expected_added)}")
+    if expected_removed is not None:
         _require(
-            not added and not removed and set(changed) == expected_changed,
-            f"Modified members {changed} (added={added}, removed={removed}) differ from authorized scope {sorted(expected_changed)}",
+            set(removed) == expected_removed,
+            f"Removed members {removed} differ from expected {sorted(expected_removed)}",
+        )
+    if expected_changed is not None:
+        if expected_added is None:
+            _require(not added, f"Unexpected added members: {added}")
+        if expected_removed is None:
+            _require(not removed, f"Unexpected removed members: {removed}")
+        _require(
+            set(changed) == expected_changed,
+            f"Changed members {changed} differ from authorized scope {sorted(expected_changed)}",
         )
     return report
 
 
 def image_dimensions(data: bytes) -> tuple[int, int] | None:
-    """Return (width, height) for PNG, JPEG, or GIF bytes; None if unknown or invalid."""
+    """Lightweight dimension probe for PNG, JPEG, and GIF headers (not a full image decoder)."""
     if data.startswith(b"\x89PNG\r\n\x1a\n") and len(data) >= 33 and data[12:16] == b"IHDR" and b"IEND" in data[-16:]:
         w, h = struct.unpack(">II", data[16:24])
         return (w, h) if w > 0 and h > 0 else None
@@ -312,25 +449,30 @@ def image_dimensions(data: bytes) -> tuple[int, int] | None:
 
 
 def run_epubcheck(book: Path, report: Path, executable: str = "epubcheck") -> Diagnostics:
-    """Run official EPUBCheck and return complete diagnostic occurrence counts."""
-    book = book.resolve()
+    """Run official EPUBCheck and return complete diagnostic occurrence counts without risking source overwrite."""
+    _require(book.is_file(), f"EPUB file does not exist: {book}")
+    log_path = report.with_suffix(".log")
+    _ensure_distinct_destination(book, report, "EPUBCheck report")
+    _ensure_distinct_destination(book, log_path, "EPUBCheck log")
+
+    book_resolved = book.resolve()
     cwd = Path.cwd()
-    relative_book = book.relative_to(cwd).as_posix() if book.is_relative_to(cwd) else None
-    container_paths = {str(book), unquote(book.as_uri())}
+    relative_book = book_resolved.relative_to(cwd).as_posix() if book_resolved.is_relative_to(cwd) else None
+    container_paths = {str(book_resolved), unquote(book_resolved.as_uri())}
     report.parent.mkdir(parents=True, exist_ok=True)
-    with TemporaryDirectory(dir=report.parent) as tmp:
+    with TemporaryDirectory(prefix=".blackflame-check-", dir=report.parent) as tmp:
         fresh = Path(tmp) / "result.json"
         proc = subprocess.run(
-            [executable, "--maxOfEachMessage", "unlimited", "--json", str(fresh), str(book)],
+            [executable, "--maxOfEachMessage", "unlimited", "--json", str(fresh), str(book_resolved)],
             capture_output=True,
             timeout=180,
         )
-        report.with_suffix(".log").write_bytes(proc.stdout + proc.stderr)
+        log_path.write_bytes(proc.stdout + proc.stderr)
         _require(proc.returncode in {0, 1} and fresh.is_file(), f"EPUBCheck did not complete for {book}")
         data = json.loads(fresh.read_text(encoding="utf-8"))
         checker = data["checker"]
         _require(
-            Path(checker["path"]).resolve() == book and bool(checker["checkerVersion"]),
+            Path(checker["path"]).resolve() == book_resolved and bool(checker["checkerVersion"]),
             f"Unexpected EPUBCheck identity for {book}",
         )
         fresh.replace(report)

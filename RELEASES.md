@@ -1,3 +1,21 @@
+## v1.5.1 (2026-11-25)
+
+### Security & Safety
+
+- Prevent `epub_safe.run_epubcheck()` from overwriting the source EPUB via report or `.log` destinations, checking resolved paths, symlinks, and hardlinks (`os.path.samefile`) before writing.
+- Enforce `LIMIT_XML` consistently in `parse_xml()` and `_read_xml_member()`, and explicitly verify each replaced member's final SHA-256 digest against the requested replacement bytes in `replace_members()`.
+
+### Fidelity & Verification
+
+- Harden `_spine_and_docs()` and `compare_epubs()` to reject unresolved/invalid spine `idref`s and empty spines, fail rather than silently pass when no reading documents can be inspected, preserve block boundaries and preformatted whitespace (`<pre>`/`<code>`/`xml:space="preserve"`) during reading-text hashing, and support `expected_added`/`expected_removed` checks for structural edits.
+- Clarify `image_dimensions()` as a lightweight header dimension probe rather than a full image decoder.
+
+### CI, Documentation & Testing
+
+- Update GitHub Actions CI to install the latest official stable EPUBCheck release with verified GitHub Release SHA-256 digests, log actual Python/package/EPUBCheck versions, and build and verify the official `Blackflame.zip` artifact in CI.
+- Refine `SKILL.md`, all four `references/*.md` guides, `agents/openai.yaml`, and `README.md` with clearer mandatory safety boundaries, tested examples, and accurate EPUB 2 → EPUB 3 migration guidance.
+- Upgrade `tests/test_epub_safe.py` and `tests/test_integration.py` with genuinely valid PNG fixtures, bilingual (Chinese + English) EPUB 2 and EPUB 3 fixtures, source-overwrite and fidelity regression tests, and standalone `uv` execution tests of the official `Blackflame.zip`.
+
 ## v1.5.0 (2026-11-25)
 
 ### Breaking Changes
