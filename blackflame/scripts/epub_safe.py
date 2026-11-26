@@ -7,7 +7,9 @@ import re
 import stat
 import struct
 import subprocess
+from bisect import bisect_left
 from collections import Counter
+from collections.abc import Iterator
 from copy import copy
 from hashlib import file_digest, sha256
 from io import BytesIO
@@ -107,9 +109,12 @@ def parse_xml(data: bytes) -> etree._ElementTree:
     return etree.parse(BytesIO(data), parser)
 
 
-def _read_xml_member(archive: ZipFile, name: str) -> bytes:
-    _require(archive.getinfo(name).file_size <= LIMIT_XML, f"XML member exceeds size limit: {name}")
-    return archive.read(name)
+def read_xml_member(archive: ZipFile, name: str) -> bytes:
+    """Read an XML ZIP member after checking its expanded size."""
+    info = archive.getinfo(name)
+    _require(not info.is_dir(), f"XML member is a directory: {name}")
+    _require(info.file_size <= LIMIT_XML, f"XML member exceeds size limit: {name}")
+    return archive.read(info)
 
 
 def safe_member(name: str) -> bool:
@@ -158,6 +163,16 @@ def check_zip(archive: ZipFile, stream) -> set[str]:
         total_size += info.file_size
         _require(total_size <= LIMIT_TOTAL, "ZIP expanded size exceeds limit")
         names.add(name)
+    ordered_names = sorted(names)
+    for name in ordered_names:
+        if name.endswith("/"):
+            continue
+        prefix = name + "/"
+        index = bisect_left(ordered_names, prefix)
+        _require(
+            index == len(ordered_names) or not ordered_names[index].startswith(prefix),
+            f"ZIP file and directory conflict: {name}",
+        )
     _require(archive.read(mime) == MEDIA_TYPE, "Unexpected mimetype content")
     return names
 
@@ -188,28 +203,27 @@ def _resolve_href(package_member: str, href: str) -> str | None:
     return member
 
 
-def _extract_structured_text(element: etree._Element, preserve_ws: bool = False) -> list[tuple[str, bool]]:
-    """Extract (text, is_preformatted) tokens preserving block boundaries and preformatted whitespace."""
-    tokens: list[tuple[str, bool]] = []
+def _iter_reading_text(element: etree._Element, preserve_ws: bool = False) -> Iterator[tuple[str, bool]]:
+    """Yield text and its whitespace mode while preserving block boundaries."""
+    _require(not isinstance(element, etree._Entity), "Unresolved entity prevents reading-text comparison")
     if not isinstance(element.tag, str):
-        return tokens
+        return
     local = etree.QName(element).localname.lower()
     is_block = local in _BLOCK_TAGS
     is_pre = preserve_ws or local in _PREFORMATTED_TAGS or element.get(XML_SPACE) == "preserve"
 
     if is_block:
-        tokens.append(("\n", False))
+        yield "\n", False
     if element.text:
         text = element.text if is_pre else re.sub(r"[ \t\r\n]+", " ", element.text)
-        tokens.append((text, is_pre))
+        yield text, is_pre
     for child in element:
-        tokens.extend(_extract_structured_text(child, preserve_ws=is_pre))
+        yield from _iter_reading_text(child, preserve_ws=is_pre)
         if child.tail:
             tail = child.tail if is_pre else re.sub(r"[ \t\r\n]+", " ", child.tail)
-            tokens.append((tail, is_pre))
+            yield tail, is_pre
     if is_block:
-        tokens.append(("\n", False))
-    return tokens
+        yield "\n", False
 
 
 def _hash_reading_text(body: etree._Element) -> str:
@@ -225,7 +239,7 @@ def _hash_reading_text(body: etree._Element) -> str:
                 parts.append(stripped)
         buf.clear()
 
-    for text, is_pre in _extract_structured_text(body):
+    for text, is_pre in _iter_reading_text(body):
         if is_pre:
             _flush_normal()
             parts.append(f"\x1f{text}\x1f")
@@ -235,8 +249,8 @@ def _hash_reading_text(body: etree._Element) -> str:
     return sha256("\n".join(parts).encode("utf-8")).hexdigest()
 
 
-def _spine_and_docs(archive: ZipFile, names: set[str]) -> tuple[list, dict[str, str], list[str]]:
-    container = parse_xml(_read_xml_member(archive, CONTAINER))
+def _spine_and_docs(archive: ZipFile, names: set[str], *, read_text: bool) -> tuple[list, dict[str, str], list[str]]:
+    container = parse_xml(read_xml_member(archive, CONTAINER))
     rootfiles = container.xpath(
         "/c:container/c:rootfiles/c:rootfile[@media-type='application/oebps-package+xml']/@full-path",
         namespaces={"c": "urn:oasis:names:tc:opendocument:xmlns:container"},
@@ -247,7 +261,7 @@ def _spine_and_docs(archive: ZipFile, names: set[str]) -> tuple[list, dict[str, 
     skipped: set[str] = set()
     for pkg in rootfiles:
         _require(pkg in names and not pkg.endswith("/"), f"Missing OPF package: {pkg}")
-        root = parse_xml(_read_xml_member(archive, pkg)).getroot()
+        root = parse_xml(read_xml_member(archive, pkg)).getroot()
         manifest = root.findall(f"{{{OPF}}}manifest/{{{OPF}}}item")
         id_to_member: dict[str, str | None] = {}
         xhtml_docs: set[str] = set()
@@ -275,13 +289,15 @@ def _spine_and_docs(archive: ZipFile, names: set[str]) -> tuple[list, dict[str, 
             seq.append((member, linear))
         direction = spine.get("page-progression-direction", "default")
         spines.append((pkg, direction, seq))
+        if not read_text:
+            continue
         for member, _ in seq:
             if member in text_hashes:
                 continue
             if member not in xhtml_docs or member in nav_docs:
                 skipped.add(member)
                 continue
-            body = parse_xml(_read_xml_member(archive, member)).getroot().find(f"{{{XHTML}}}body")
+            body = parse_xml(read_xml_member(archive, member)).getroot().find(f"{{{XHTML}}}body")
             _require(body is not None, f"Missing XHTML body: {member}")
             text_hashes[member] = _hash_reading_text(body)
     return spines, text_hashes, sorted(skipped)
@@ -337,22 +353,24 @@ def replace_members(
             check_zip(out_zip, stream)
             after = archive_hashes(out_zip)
 
-        for name, expected_bytes in replacements.items():
+        replacement_hashes = {name: sha256(data).hexdigest() for name, data in replacements.items()}
+        for name, expected_hash in replacement_hashes.items():
             _require(
-                after[name] == sha256(expected_bytes).hexdigest(),
+                after[name] == expected_hash,
                 f"Written member digest does not match requested bytes: {name}",
             )
         actual_changed = {name for name in before if before[name] != after[name]}
-        expected_changed = {name for name, data in replacements.items() if sha256(data).hexdigest() != before[name]}
+        expected_changed = {name for name, digest in replacement_hashes.items() if digest != before[name]}
         _require(actual_changed == expected_changed, "Archive member changes differ from requested replacements")
-        _require(sha256_file(source) == source_digest, "Source EPUB changed during editing")
 
         staged.chmod(0o600)
+        output_digest = sha256_file(staged)
+        _require(sha256_file(source) == source_digest, "Source EPUB changed during editing")
         os.link(staged, output)
 
     return {
         "source_sha256": source_digest,
-        "output_sha256": sha256_file(output),
+        "output_sha256": output_digest,
         "changed": {name: {"before": before[name], "after": after[name]} for name in sorted(actual_changed)},
         "unchanged_entries": len(before) - len(actual_changed),
     }
@@ -378,7 +396,9 @@ def compare_epubs(
             names = check_zip(archive, stream)
             members = archive_hashes(archive)
             spines, texts, skipped = (
-                _spine_and_docs(archive, names) if (preserve_spine or preserve_text) else ([], {}, [])
+                _spine_and_docs(archive, names, read_text=preserve_text)
+                if preserve_spine or preserve_text
+                else ([], {}, [])
             )
         snapshots.append((sha256_file(path), members, spines, texts, skipped))
 

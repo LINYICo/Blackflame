@@ -17,12 +17,13 @@ with EPUB("source.epub", generator_tag=False) as book:
     print(book.metadata.title, book.metadata.language, book.metadata.identifier)
 ```
 
-For structural EPUB 3 work (covers, manifest, navigation), `epublib` may also write to a distinct output path; note that `book.write()` reserializes `META-INF/container.xml`.
+For structural EPUB 3 work (covers, manifest, navigation), `epublib` can write a temporary candidate via `book.write()` before [verification and delivery](validation.md#candidate-files-and-delivery). This call reserializes `META-INF/container.xml`.
 
 ## Minimal Metadata-Only Edit (`lxml` + `epub_safe.replace_members`)
 
-- **Already EPUB Latest**: Edit only the OPF with `lxml` + `epub_safe.replace_members()`.
-- **EPUB 2**: Migrate to EPUB Latest first ([editing.md](editing.md)), verify the migrated baseline, then apply this OPF edit ([validation.md](validation.md)).
+- Inspect the intended field first. If its verified value is already present, stop without creating an output or migrating the source.
+- For an actual EPUB 2 edit, migrate to EPUB Latest per [editing.md](editing.md) and verify the migrated baseline before editing the OPF. The example below starts from an EPUB 3 package with a single title. When a package has several titles, identify the intended one using its refinements before editing.
+- Pass a staged path as `out`. Before delivering that file, complete the EPUBCheck and publication steps in [validation.md](validation.md).
 
 ```python
 import sys
@@ -34,55 +35,52 @@ from lxml import etree
 sys.path.insert(0, "/abs/path/to/blackflame/scripts")
 import epub_safe
 
-src, out = Path("source.epub"), Path("edited-metadata.epub")
-dc_ns = "http://purl.org/dc/elements/1.1/"
 
-with src.open("rb") as stream, ZipFile(stream) as zf:
-    names = epub_safe.check_zip(zf, stream)
-    if prot := epub_safe.protection_entries(names):
-        raise ValueError(f"Inspect protection before editing: {prot}")
-    container = epub_safe.parse_xml(zf.read(epub_safe.CONTAINER))
-    rootfiles = container.xpath(
-        "/c:container/c:rootfiles/c:rootfile[@media-type='application/oebps-package+xml']/@full-path",
-        namespaces={"c": "urn:oasis:names:tc:opendocument:xmlns:container"},
-    )
-    if len(rootfiles) != 1:
-        raise ValueError(f"Expected 1 OPF package; handle multi-package scope explicitly: {rootfiles}")
-    opf_member = rootfiles[0]
-    opf_tree = epub_safe.parse_xml(zf.read(opf_member))
+def edit_title(src: Path, out: Path, verified_title: str) -> bool:
+    with src.open("rb") as stream, ZipFile(stream) as zf:
+        names = epub_safe.check_zip(zf, stream)
+        if protected := epub_safe.protection_entries(names):
+            raise ValueError(f"Inspect protection before editing: {protected}")
+        container = epub_safe.parse_xml(epub_safe.read_xml_member(zf, epub_safe.CONTAINER))
+        rootfiles = container.xpath(
+            "/c:container/c:rootfiles/c:rootfile[@media-type='application/oebps-package+xml']/@full-path",
+            namespaces={"c": "urn:oasis:names:tc:opendocument:xmlns:container"},
+        )
+        if len(rootfiles) != 1:
+            raise ValueError(f"Expected one OPF package; verify the intended package: {rootfiles}")
+        opf_member = rootfiles[0]
+        opf_tree = epub_safe.parse_xml(epub_safe.read_xml_member(zf, opf_member))
 
-opf_root = opf_tree.getroot()
-meta_el = opf_root.find(f"{{{epub_safe.OPF}}}metadata")
-if meta_el is None:
-    raise ValueError("Missing <metadata> element in OPF")
+    opf_root = opf_tree.getroot()
+    if opf_root.get("version") != "3.0":
+        raise ValueError("Confirm EPUB 3 before applying this edit")
+    meta = opf_root.find(f"{{{epub_safe.OPF}}}metadata")
+    if meta is None:
+        raise ValueError("Missing <metadata> element in OPF")
 
-# Update existing dc:title or explicitly create one if absent (never silently claim success).
-title_el = meta_el.find(f"{{{dc_ns}}}title")
-if title_el is None:
-    title_el = etree.SubElement(meta_el, f"{{{dc_ns}}}title")
-title_el.text = "Verified Title"
+    title_tag = "{http://purl.org/dc/elements/1.1/}title"
+    title = meta.find(title_tag)
+    if title is not None and title.text == verified_title:
+        return False
 
-# For EPUB 3 packages, update existing unrefined dcterms:modified or add it if missing.
-if opf_root.get("version", "").startswith("3"):
-    now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    modified = [
-        m for m in meta_el.findall(f"{{{epub_safe.OPF}}}meta[@property='dcterms:modified']") if not m.get("refines")
-    ]
-    if modified:
-        modified[0].text = now_utc
-    else:
-        etree.SubElement(meta_el, f"{{{epub_safe.OPF}}}meta", property="dcterms:modified").text = now_utc
+    modified_tag = f"{{{epub_safe.OPF}}}meta"
+    modified = [m for m in meta.findall(f"{modified_tag}[@property='dcterms:modified']") if "refines" not in m.attrib]
+    if len(modified) > 1:
+        raise ValueError("Multiple unrefined dcterms:modified entries; resolve with user authorization")
+    if title is None:
+        title = etree.SubElement(meta, title_tag)
+    title.text = verified_title
+    timestamp = modified[0] if modified else etree.SubElement(meta, modified_tag, property="dcterms:modified")
+    timestamp.text = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-epub_safe.replace_members(src, out, {opf_member: etree.tostring(opf_tree, xml_declaration=True, encoding="utf-8")})
-epub_safe.compare_epubs(
-    src,
-    out,
-    expected_changed={opf_member},
-    expected_added=set(),
-    expected_removed=set(),
-    preserve_spine=True,
-    preserve_text=True,
-)
+    epub_safe.replace_members(src, out, {opf_member: etree.tostring(opf_tree, xml_declaration=True, encoding="utf-8")})
+    epub_safe.compare_epubs(src, out, expected_changed={opf_member}, preserve_spine=True, preserve_text=True)
+    return True
+
+
+if __name__ == "__main__":
+    changed = edit_title(Path("source.epub"), Path("edited-metadata.epub"), "Verified Title")
+    print("Metadata updated" if changed else "The verified title is already present")
 ```
 
 ## Cover Replacement

@@ -9,7 +9,7 @@ from collections import Counter
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from zipfile import ZIP_STORED, BadZipFile, ZipFile
+from zipfile import ZIP_DEFLATED, ZIP_STORED, BadZipFile, ZipFile
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "blackflame/scripts"
 sys.path.insert(0, str(SCRIPTS))
@@ -167,6 +167,25 @@ class EpubSafeSecurityTests(unittest.TestCase):
         with self.assertRaises(BadZipFile):
             ZipFile(BytesIO(b"not a zip archive"))
 
+    def test_zip_rejects_file_directory_conflicts(self):
+        for path in ("OPS/chapter/", "OPS/chapter/page.xhtml"):
+            with self.subTest(path=path):
+                stream = BytesIO()
+                with ZipFile(stream, "w") as zf:
+                    zf.writestr("mimetype", epub_safe.MEDIA_TYPE, compress_type=ZIP_STORED)
+                    zf.writestr("OPS/chapter", b"file")
+                    zf.writestr(path, b"")
+                with ZipFile(stream) as zf, self.assertRaisesRegex(ValueError, "ZIP file and directory conflict"):
+                    epub_safe.check_zip(zf, stream)
+
+    def test_xml_member_size_is_checked_before_read(self):
+        stream = BytesIO()
+        with ZipFile(stream, "w", compression=ZIP_DEFLATED) as zf:
+            zf.writestr("book.opf", b" " * (epub_safe.LIMIT_XML + 1))
+        with ZipFile(stream) as zf:
+            with self.assertRaisesRegex(ValueError, "XML member exceeds size limit"):
+                epub_safe.read_xml_member(zf, "book.opf")
+
     def test_replace_members_protects_source_and_refuses_protected_epubs(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -177,13 +196,17 @@ class EpubSafeSecurityTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "must not overwrite"):
                 epub_safe.replace_members(src, src, {"OPS/ch1.xhtml": b"x"})
 
-            protected = root / "signed.epub"
-            with ZipFile(src) as z_in, ZipFile(protected, "w") as z_out:
-                for info in z_in.infolist():
-                    z_out.writestr(info, z_in.read(info))
-                z_out.writestr("META-INF/signatures.xml", b"<signatures/>")
-            with self.assertRaisesRegex(ValueError, "Protected publication"):
-                epub_safe.replace_members(protected, root / "out.epub", {"OPS/ch1.xhtml": b"x"})
+            for entry in ("signatures.xml", "rights.xml", "encryption.xml"):
+                with self.subTest(entry=entry):
+                    protected = root / f"{entry}.epub"
+                    with ZipFile(src) as z_in, ZipFile(protected, "w") as z_out:
+                        for info in z_in.infolist():
+                            z_out.writestr(info, z_in.read(info))
+                        z_out.writestr(f"META-INF/{entry}", b"<protection/>")
+                    out = root / "out.epub"
+                    with self.assertRaisesRegex(ValueError, "Protected publication"):
+                        epub_safe.replace_members(protected, out, {"OPS/ch1.xhtml": b"x"})
+                    self.assertFalse(out.exists())
 
             self.assertEqual(epub_safe.sha256_file(src), original_sha)
 

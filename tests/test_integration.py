@@ -27,6 +27,16 @@ REQUIRE_EPUBCHECK = os.environ.get("BLACKFLAME_REQUIRE_EPUBCHECK") == "1"
 REQUIRE_RELEASE_ZIP = os.environ.get("BLACKFLAME_REQUIRE_RELEASE_ZIP") == "1"
 DC_NS = "http://purl.org/dc/elements/1.1/"
 NCX_NS = "http://www.daisy.org/z3986/2005/ncx/"
+MODIFIED = f".//{{{epub_safe.OPF}}}meta[@property='dcterms:modified']"
+EDITED_AT = "2026-11-25T00:00:01Z"
+
+
+def _metadata_example():
+    guide = (REPO_ROOT / "blackflame/references/metadata.md").read_text(encoding="utf-8")
+    example = guide.split("## Minimal Metadata-Only Edit", 1)[1].split("```python\n", 1)[1].split("```", 1)[0]
+    namespace = {"__name__": "metadata_example"}
+    exec(compile(example.replace("/abs/path/to/blackflame/scripts", str(SCRIPTS)), "metadata.md", "exec"), namespace)
+    return namespace["edit_title"]
 
 
 def _epubcheck_available() -> bool:
@@ -35,12 +45,12 @@ def _epubcheck_available() -> bool:
 
 def _read_opf_summary(epub_path: Path) -> dict[str, str]:
     with ZipFile(epub_path) as zf:
-        container = epub_safe.parse_xml(zf.read(epub_safe.CONTAINER))
+        container = epub_safe.parse_xml(epub_safe.read_xml_member(zf, epub_safe.CONTAINER))
         opf_member = container.xpath(
             "/c:container/c:rootfiles/c:rootfile[@media-type='application/oebps-package+xml']/@full-path",
             namespaces={"c": "urn:oasis:names:tc:opendocument:xmlns:container"},
         )[0]
-        opf_root = epub_safe.parse_xml(zf.read(opf_member)).getroot()
+        opf_root = epub_safe.parse_xml(epub_safe.read_xml_member(zf, opf_member)).getroot()
     unique_id_ref = opf_root.get("unique-identifier", "")
     primary_id = ""
     for ident in opf_root.findall(f".//{{{DC_NS}}}identifier"):
@@ -129,19 +139,21 @@ class RealToolIntegrationTests(unittest.TestCase):
             make_bilingual_epub3(src, title="旧书名 Old Title")
             src_sha = epub_safe.sha256_file(src)
 
-            with ZipFile(src) as zf:
-                container = epub_safe.parse_xml(zf.read(epub_safe.CONTAINER))
-                opf_member = container.xpath(
-                    "/c:container/c:rootfiles/c:rootfile[@media-type='application/oebps-package+xml']/@full-path",
-                    namespaces={"c": "urn:oasis:names:tc:opendocument:xmlns:container"},
-                )[0]
-                opf_tree = epub_safe.parse_xml(zf.read(opf_member))
-
-            title_el = opf_tree.find(f".//{{{DC_NS}}}title")
-            self.assertIsNotNone(title_el)
-            title_el.text = "修订书名 Verified Title"
-            new_opf = etree.tostring(opf_tree, xml_declaration=True, encoding="utf-8")
-            epub_safe.replace_members(src, out, {opf_member: new_opf})
+            opf_member = _read_opf_summary(src)["opf_member"]
+            edit_title = _metadata_example()
+            self.assertFalse(edit_title(src, out, "旧书名 Old Title"))
+            self.assertFalse(out.exists())
+            self.assertTrue(edit_title(src, out, "修订书名 Verified Title"))
+            with ZipFile(src) as before_zip, ZipFile(out) as after_zip:
+                before_opf = epub_safe.parse_xml(epub_safe.read_xml_member(before_zip, opf_member))
+                after_opf = epub_safe.parse_xml(epub_safe.read_xml_member(after_zip, opf_member))
+            timestamps = after_opf.findall(MODIFIED)
+            self.assertEqual(len(timestamps), 1)
+            self.assertRegex(timestamps[0].text, r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+            self.assertNotEqual(timestamps[0].text, before_opf.findtext(MODIFIED))
+            before_opf.find(f".//{{{DC_NS}}}title").text = "修订书名 Verified Title"
+            before_opf.find(MODIFIED).text = timestamps[0].text
+            self.assertEqual(etree.tostring(before_opf), etree.tostring(after_opf))
 
             self.assertEqual(epub_safe.sha256_file(src), src_sha)
             diff = epub_safe.compare_epubs(
@@ -187,14 +199,49 @@ class RealToolIntegrationTests(unittest.TestCase):
                 self.assertFalse(after.has_errors)
                 self.assertFalse(after_lib.has_errors)
 
+    def test_metadata_example_rejects_duplicate_modified_and_restores_missing_entry(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "book.epub"
+            make_bilingual_epub3(src)
+            opf_member = _read_opf_summary(src)["opf_member"]
+            edit_title = _metadata_example()
+            for count in (0, 2):
+                with self.subTest(timestamps=count), ZipFile(src) as zf:
+                    opf = epub_safe.parse_xml(epub_safe.read_xml_member(zf, opf_member))
+                    timestamp = opf.find(MODIFIED)
+                    meta = timestamp.getparent()
+                    if count == 0:
+                        meta.remove(timestamp)
+                    else:
+                        etree.SubElement(meta, timestamp.tag, property="dcterms:modified").text = EDITED_AT
+                    variant = root / f"source-{count}.epub"
+                    out = root / f"edited-{count}.epub"
+                    epub_safe.replace_members(src, variant, {opf_member: etree.tostring(opf)})
+                    source_hash = epub_safe.sha256_file(variant)
+                    if count == 2:
+                        with self.assertRaisesRegex(ValueError, "Multiple unrefined dcterms:modified"):
+                            edit_title(variant, out, "Verified Title")
+                        self.assertFalse(out.exists())
+                    else:
+                        self.assertTrue(edit_title(variant, out, "Verified Title"))
+                        with ZipFile(out) as edited:
+                            updated = epub_safe.parse_xml(epub_safe.read_xml_member(edited, opf_member))
+                        self.assertEqual(len(updated.findall(MODIFIED)), 1)
+                    self.assertEqual(epub_safe.sha256_file(variant), source_hash)
+
     def test_epub2_and_epub3_surgical_body_editing_with_bs4_lxml(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             src3 = root / "book3.epub"
             out3 = root / "edited3.epub"
             make_bilingual_epub3(src3, body_zh="这里有一个<em>错别字</em>需要修正。")
+            opf_member = _read_opf_summary(src3)["opf_member"]
             with ZipFile(src3) as zf:
-                raw3 = zf.read("OPS/ch1.xhtml")
+                raw3 = epub_safe.read_xml_member(zf, "OPS/ch1.xhtml")
+                original_opf = epub_safe.parse_xml(epub_safe.read_xml_member(zf, opf_member))
+            original_opf.find(MODIFIED).text = EDITED_AT
+            expected_opf = etree.tostring(original_opf)
             soup3 = BeautifulSoup(raw3, "xml")
             em_node = soup3.find("em")
             self.assertIsNotNone(em_node)
@@ -206,9 +253,15 @@ class RealToolIntegrationTests(unittest.TestCase):
             self.assertIn(b"<em>", new3)
             self.assertIn(b'href="#fn1"', new3)
             epub_safe.parse_xml(new3)
-            epub_safe.replace_members(src3, out3, {"OPS/ch1.xhtml": new3})
-            diff3 = epub_safe.compare_epubs(src3, out3, expected_changed={"OPS/ch1.xhtml"}, preserve_spine=True)
-            self.assertEqual(diff3["unchanged_entries"], 6)
+            epub_safe.replace_members(src3, out3, {"OPS/ch1.xhtml": new3, opf_member: expected_opf})
+            diff3 = epub_safe.compare_epubs(
+                src3, out3, expected_changed={"OPS/ch1.xhtml", opf_member}, preserve_spine=True
+            )
+            self.assertEqual(diff3["unchanged_entries"], 5)
+            with ZipFile(out3) as zf:
+                updated_opf = epub_safe.parse_xml(epub_safe.read_xml_member(zf, opf_member))
+            self.assertEqual(updated_opf.findtext(MODIFIED), EDITED_AT)
+            self.assertEqual(etree.tostring(updated_opf), expected_opf)
 
             src2 = root / "book2.epub"
             out2 = root / "edited2.epub"
@@ -474,7 +527,7 @@ class RealToolIntegrationTests(unittest.TestCase):
 
             with out_epub.open("rb") as stream, ZipFile(stream) as zf:
                 names = epub_safe.check_zip(zf, stream)
-                spines, _, _ = epub_safe._spine_and_docs(zf, names)
+                spines, _, _ = epub_safe._spine_and_docs(zf, names, read_text=True)
                 spine_members = [m for _, _, seq in spines for m, _ in seq]
                 spine_text = "\n".join(BeautifulSoup(zf.read(m), "xml").get_text() for m in spine_members)
                 pos1 = spine_text.find("第一段中文正文")
@@ -579,13 +632,15 @@ meta_out = work / "meta-edited.epub"
 body_out = work / "body-edited.epub"
 
 with ZipFile(src) as zf:
-    c = epub_safe.parse_xml(zf.read(epub_safe.CONTAINER))
+    c = epub_safe.parse_xml(epub_safe.read_xml_member(zf, epub_safe.CONTAINER))
     opf_member = c.xpath(
         "/c:container/c:rootfiles/c:rootfile[@media-type='application/oebps-package+xml']/@full-path",
         namespaces={{"c": "urn:oasis:names:tc:opendocument:xmlns:container"}},
     )[0]
-    opf = epub_safe.parse_xml(zf.read(opf_member))
+    opf = epub_safe.parse_xml(epub_safe.read_xml_member(zf, opf_member))
 opf.find(".//{{http://purl.org/dc/elements/1.1/}}title").text = "Standalone Verified"
+modified = opf.find({MODIFIED!r})
+modified.text = {EDITED_AT!r}
 epub_safe.replace_members(src, meta_out, {{opf_member: etree.tostring(opf, xml_declaration=True, encoding="utf-8")}})
 epub_safe.compare_epubs(src, meta_out, expected_changed={{opf_member}}, preserve_spine=True, preserve_text=True)
 
@@ -595,8 +650,13 @@ soup = BeautifulSoup(raw, "xml")
 assert any("独立包测试错别字" in p.get_text() for p in soup.select("p"))
 updated_ch = raw.replace("独立包测试错别字".encode(), "独立包已校对".encode(), 1)
 epub_safe.parse_xml(updated_ch)
-epub_safe.replace_members(meta_out, body_out, {{"OPS/ch1.xhtml": updated_ch}})
-epub_safe.compare_epubs(meta_out, body_out, expected_changed={{"OPS/ch1.xhtml"}}, preserve_spine=True)
+modified.text = "2026-11-25T00:00:02Z"
+opf_data = etree.tostring(opf, xml_declaration=True, encoding="utf-8")
+epub_safe.replace_members(meta_out, body_out, {{"OPS/ch1.xhtml": updated_ch, opf_member: opf_data}})
+epub_safe.compare_epubs(meta_out, body_out, expected_changed={{"OPS/ch1.xhtml", opf_member}}, preserve_spine=True)
+with ZipFile(body_out) as zf:
+    delivered_opf = epub_safe.parse_xml(epub_safe.read_xml_member(zf, opf_member))
+assert delivered_opf.findtext({MODIFIED!r}) == "2026-11-25T00:00:02Z"
 
 if {run_ec!r}:
     b = epub_safe.run_epubcheck(src, work / "ec-src.json")

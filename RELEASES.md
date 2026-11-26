@@ -1,3 +1,10 @@
+## v1.5.6 (2026-11-26)
+
+- Leave EPUBs untouched when the requested metadata value already matches. After an actual EPUB 3 edit, update one UTC modification timestamp, add it if absent, and report duplicates before writing.
+- Limit XML ZIP members before reading and reject file/directory name conflicts. The reading-text comparison now reports unresolved entities. Spine-only checks read package structure without parsing chapter text.
+- Stage native conversion and reconstruction outputs, then deliver verified files with no-overwrite semantics. Use the Agent client's sandbox for untrusted conversion inputs.
+- Test Python 3.13 and the latest stable Python on Ubuntu and macOS. Publish the tested Git archive with its SHA-256 and verified dependency environment.
+
 ## v1.5.5 (2026-11-26)
 
 ### Conversion Compatibility & Delivery Guidance

@@ -5,7 +5,7 @@ Use this guide for proofreading, XHTML/CSS edits, promotional content removal, c
 ## Surgical Replacement vs. Structural Reconstruction
 
 - **Targeted edits (`lxml` + `epub_safe.replace_members`)**: Use for copyediting, CSS tweaks, or single-chapter fixes so untouched chapters and binary assets remain byte-identical.
-- **Structural reconstruction (`epublib`)**: Use when adding/removing/renaming resources or rebuilding navigation/spine. Write to a new file and verify exact diffs with `epub_safe.compare_epubs()`.
+- **Structural reconstruction (`epublib`)**: Use when adding/removing/renaming resources or rebuilding navigation/spine. Write a staged candidate, verify exact diffs with `epub_safe.compare_epubs()`, and follow [Candidate Files and Delivery](validation.md#candidate-files-and-delivery).
 
 ## Targeted Copyediting Checklist
 

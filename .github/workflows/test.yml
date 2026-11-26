@@ -1,19 +1,25 @@
 name: Tests
-on: [push, pull_request]
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
 permissions:
   contents: read
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/ruff-action@v4.1.0
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/ruff-action@278981a28ce3188b1e39527901f38254bf3aac89 # v4.1.0
         with:
           args: "check"
-      - uses: astral-sh/ruff-action@v4.1.0
+      - uses: astral-sh/ruff-action@278981a28ce3188b1e39527901f38254bf3aac89 # v4.1.0
         with:
           args: "format --check"
-      - uses: ewhauser/shuck-action@v1
+      - uses: ewhauser/shuck-action@9cadfc28756c064e2069d58dda7ce83ad7cb8152 # v1
         with:
           mode: check
           paths: |
@@ -23,22 +29,29 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-15]
+        python: ["3.13", "3.x"]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        id: python
         with:
-          python-version: "3.x"
+          python-version: ${{ matrix.python }}
           check-latest: true
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
           java-version: "21"
       - name: Sync latest dependencies
+        env:
+          UV_PYTHON: ${{ steps.python.outputs.python-path }}
         run: |
+          echo "UV_PYTHON=$UV_PYTHON" >> "$GITHUB_ENV"
           uv sync --project blackflame --upgrade
           uv run --project blackflame --no-sync python --version
           uv pip list --python blackflame/.venv
@@ -71,7 +84,7 @@ jobs:
               raise SystemExit(f"Missing official SHA-256 digest for {asset['name']}: {digest!r}")
           expected = digest.removeprefix("sha256:")
           bundle = dest / "epubcheck.zip"
-          dl_req = urllib.request.Request(asset["browser_download_url"], headers=headers)
+          dl_req = urllib.request.Request(asset["browser_download_url"], headers={"User-Agent": "blackflame-ci"})
           with urllib.request.urlopen(dl_req, timeout=120) as resp, bundle.open("wb") as out:
               shutil.copyfileobj(resp, out)
           actual = hashlib.sha256(bundle.read_bytes()).hexdigest()
@@ -85,13 +98,68 @@ jobs:
           print(f"Installed official EPUBCheck {tag} (sha256 verified)")
           PY
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
-      - name: Build official release archive and run test suite
+      - name: Build archive and run test suite
         env:
           BLACKFLAME_REQUIRE_EPUBCHECK: "1"
           BLACKFLAME_REQUIRE_RELEASE_ZIP: "1"
         run: |
-          epubcheck --version
-          rm -f Blackflame.zip
-          zip -r Blackflame.zip LICENSE blackflame -x "blackflame/.venv/*" "blackflame/uv.lock" "*/__pycache__/*" "*.pyc" "*.DS_Store"
-          python3 -c "import hashlib, pathlib; print('Blackflame.zip SHA-256:', hashlib.sha256(pathlib.Path('Blackflame.zip').read_bytes()).hexdigest())"
+          git archive --format=zip --output=Blackflame.zip "$GITHUB_SHA" LICENSE blackflame
           uv run --project blackflame --no-sync python -m unittest discover -s tests -v
+      - name: Record the tested release archive
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.x'
+        run: |
+          sha256sum Blackflame.zip > Blackflame.zip.sha256
+          {
+            echo "Commit: $GITHUB_SHA"
+            python --version
+            uv --version
+            java -version 2>&1
+            epubcheck --version
+            uv pip freeze --python blackflame/.venv
+          } > release-environment.txt
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.x'
+        with:
+          name: tested-release
+          path: |
+            Blackflame.zip
+            Blackflame.zip.sha256
+            release-environment.txt
+          if-no-files-found: error
+  release:
+    needs: [lint, test]
+    if: >-
+      github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') ||
+      (github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'Release v')))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: tested-release
+      - name: Verify and publish the tested release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          sha256sum -c Blackflame.zip.sha256
+          version=$(python3 -c 'import tomllib; from pathlib import Path; print(tomllib.loads(Path("blackflame/pyproject.toml").read_text())["project"]["version"])')
+          tag="v$version"
+          grep -Fxq "  version: \"$version\"" blackflame/SKILL.md
+          awk '/^## v[0-9]/ { if (found) exit; found = 1 }
+               found { print }' RELEASES.md > release-notes.md
+          grep -Fq "## $tag (" release-notes.md
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            test "$GITHUB_REF_NAME" = "$tag"
+          else
+            test "$(git log -1 --format=%s)" = "Release $tag"
+          fi
+          # Reuse an existing matching tag and refuse to publish from a different commit.
+          tagged_commit=$(git ls-remote origin "refs/tags/$tag" "refs/tags/$tag^{}" | tail -n 1 | cut -f1)
+          test -z "$tagged_commit" || test "$tagged_commit" = "$GITHUB_SHA"
+          gh release create "$tag" Blackflame.zip Blackflame.zip.sha256 release-environment.txt \
+            --target "$GITHUB_SHA" --title "$tag" --notes-file release-notes.md --latest

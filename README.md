@@ -12,6 +12,8 @@ The skill includes its own `blackflame/pyproject.toml` (Python 3.13+, managed wi
 uv sync --project /abs/path/to/blackflame
 ```
 
+Install the [official EPUBCheck CLI](https://github.com/w3c/epubcheck/releases) and its required Java runtime for EPUB conformance checks. Verify the launcher with `epubcheck --version`. Run the skill's Python and `ebook-convert` through `uv run --project /abs/path/to/blackflame --no-sync`.
+
 ## Capabilities & Tech Stack
 
 - **Metadata**: Inspect, verify, and edit EPUB title, author, translator, ISBN, publisher, language, series, and cover artwork.
@@ -36,6 +38,7 @@ Sync latest dependencies and run the test suite from the repository root:
 
 ```sh
 uv sync --project blackflame --upgrade
+git archive --format=zip --output=Blackflame.zip HEAD LICENSE blackflame
 uv run --project blackflame --no-sync python -m unittest discover -s tests -v
 ```
 
@@ -46,6 +49,8 @@ ruff check .
 ruff format --check .
 shuck check .
 ```
+
+CI tests Python 3.13 and the latest stable Python on Ubuntu and macOS. To release, push a matching `vX.Y.Z` tag or land a `Release vX.Y.Z` commit on `main`. Once the test matrix and lint pass, GitHub publishes the tested ZIP, its SHA-256, and the release environment. The version must match `blackflame/SKILL.md`, `blackflame/pyproject.toml`, and the first entry in `RELEASES.md`.
 
 ## License
 
