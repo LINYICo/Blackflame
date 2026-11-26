@@ -1,6 +1,6 @@
 [project]
 name = "blackflame"
-version = "1.5.6"
+version = "1.5.7"
 description = "Agent-first skill for EPUB metadata, editing, format conversion, and deterministic validation."
 requires-python = ">=3.13"
 dependencies = [

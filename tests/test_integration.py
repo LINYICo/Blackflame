@@ -230,6 +230,24 @@ class RealToolIntegrationTests(unittest.TestCase):
                         self.assertEqual(len(updated.findall(MODIFIED)), 1)
                     self.assertEqual(epub_safe.sha256_file(variant), source_hash)
 
+    def test_metadata_example_requires_explicit_scope_for_multiple_titles(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "book.epub"
+            make_bilingual_epub3(src)
+            member = _read_opf_summary(src)["opf_member"]
+            with ZipFile(src) as zf:
+                opf = epub_safe.parse_xml(epub_safe.read_xml_member(zf, member))
+            title = opf.find(f".//{{{DC_NS}}}title")
+            etree.SubElement(title.getparent(), title.tag).text = "Subtitle"
+            multiple = root / "multiple-titles.epub"
+            epub_safe.replace_members(src, multiple, {member: etree.tostring(opf)})
+
+            out = root / "edited.epub"
+            with self.assertRaisesRegex(ValueError, "Multiple dc:title entries"):
+                _metadata_example()(multiple, out, "New subtitle")
+            self.assertFalse(out.exists())
+
     def test_epub2_and_epub3_surgical_body_editing_with_bs4_lxml(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

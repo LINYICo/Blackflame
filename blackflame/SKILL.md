@@ -3,7 +3,7 @@ name: blackflame
 description: Agent-first skill for EPUB Latest metadata management, content and structural editing, automatic EPUB 2 migration, format conversion, and deterministic validation. Use when asked to inspect or fix EPUB metadata, proofread XHTML, remove promotional inserts, replace covers, repair navigation or footnotes, migrate EPUB 2 to EPUB Latest, optimize Apple Books compatibility, or convert e-book formats.
 license: MIT
 metadata:
-  version: "1.5.6"
+  version: "1.5.7"
 ---
 
 # Blackflame

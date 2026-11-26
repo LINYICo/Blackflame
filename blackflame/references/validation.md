@@ -33,6 +33,7 @@ Delivery rules when EPUBCheck applies:
 1. Choose a new destination and reject an existing path, including a dangling symlink. Record the source SHA-256 and create a private temporary directory under the destination's parent, on the same filesystem.
 2. Run the native tool against the approved source and write a candidate in that directory with the correct extension. Keep reports and additional candidates there. Verify the candidate against the task and recheck the source SHA-256.
 3. Publish the verified regular file with `os.link(candidate, destination)`. This operation fails if the destination appeared during verification. If the filesystem does not support hard links, report the delivery failure. A failed check or publication leaves the existing destination intact.
+4. Use a `TemporaryDirectory` context for the private staging directory so intermediate candidates and validator reports are cleaned up on either success or failure. Copy out reports the user requested before leaving the context.
 
 ## Three-Stage Verification (Migrated EPUBs)
 

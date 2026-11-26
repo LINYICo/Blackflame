@@ -24,7 +24,8 @@ uv run --project /abs/path/to/blackflame --no-sync ebook-convert /abs/path/to/so
 ```
 
 3. **Preserve verified metadata & language precision.** Inspect source metadata first and reuse reliable values. For `TXT`, Markdown, or bare HTML inputs, pass verified `--title`, `--authors`, and `--language` so `ebook-convert` does not guess titles from body lines (such as `THE CONTENTS` or `Section 1`); leave unverified fields unknown and never guess regions or convert between Simplified and Traditional Chinese. Because `ebook-convert` may normalize tags (e.g., `zh-CN` → `zh`), check the output `dc:language` afterward and restore verified tags (`zh-Hans`, `zh-Hant`, `zh-CN`, `zh-TW`, `zh-HK`, etc.) via `lxml` + `epub_safe.replace_members()` while updating `dcterms:modified` and preserving legitimate local XHTML `lang`/`xml:lang` attributes.
-4. Never treat `EPUB → TXT → EPUB` or same-converter round-trips as lossless or independent quality proof; if the original EPUB is available, restore verified metadata from it and note TXT's inherent loss of images, styling, TOC, and footnote semantics.
+4. **Verify the language declaration on every generated EPUB.** When no language is passed, the converter can write the process locale `C`, which EPUBCheck rejects as `OPF-092`. Pass a verified source language explicitly or repair the candidate's OPF with that value. If the publication language cannot be determined, use the BCP 47 tag `und` and report that it is undetermined. Verify the saved OPF value after conversion, including any language tag the converter shortened.
+5. Never treat `EPUB → TXT → EPUB` or same-converter round-trips as lossless or independent quality proof; if the original EPUB is available, restore verified metadata from it and note TXT's inherent loss of images, styling, TOC, and footnote semantics.
 
 ## Format-Appropriate Verification & Post-Conversion Fixes
 

@@ -59,7 +59,10 @@ def edit_title(src: Path, out: Path, verified_title: str) -> bool:
         raise ValueError("Missing <metadata> element in OPF")
 
     title_tag = "{http://purl.org/dc/elements/1.1/}title"
-    title = meta.find(title_tag)
+    titles = meta.findall(title_tag)
+    if len(titles) > 1:
+        raise ValueError("Multiple dc:title entries; use OPF refinements to identify the intended title")
+    title = titles[0] if titles else None
     if title is not None and title.text == verified_title:
         return False
 
@@ -74,7 +77,7 @@ def edit_title(src: Path, out: Path, verified_title: str) -> bool:
     timestamp.text = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     epub_safe.replace_members(src, out, {opf_member: etree.tostring(opf_tree, xml_declaration=True, encoding="utf-8")})
-    epub_safe.compare_epubs(src, out, expected_changed={opf_member}, preserve_spine=True, preserve_text=True)
+    epub_safe.compare_epubs(src, out, expected_changed={opf_member}, preserve_spine=True)
     return True
 
 

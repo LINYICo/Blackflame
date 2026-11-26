@@ -1,3 +1,9 @@
+## v1.5.7 (2026-11-26)
+
+- Check the saved EPUB language after conversion. Restore verified language tags when the converter shortens them or writes the process locale `C`. Use `und` when the publication language is unknown.
+- Require an explicit title choice in the metadata editing example when an EPUB contains multiple titles. Add a regression test that verifies an ambiguous edit produces no output.
+- Document temporary-directory cleanup after conversion and validation, including how to preserve requested reports.
+
 ## v1.5.6 (2026-11-26)
 
 - Leave EPUBs untouched when the requested metadata value already matches. After an actual EPUB 3 edit, update one UTC modification timestamp, add it if absent, and report duplicates before writing.
