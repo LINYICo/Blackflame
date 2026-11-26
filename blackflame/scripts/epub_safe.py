@@ -88,7 +88,7 @@ def _ensure_distinct_destination(source: Path, destination: Path, label: str) ->
     src_resolved = source.resolve()
     dst_resolved = destination.resolve()
     _require(dst_resolved != src_resolved, f"{label} path must not overwrite the source EPUB: {destination}")
-    if os.path.lexists(destination) and destination.exists():
+    if destination.exists():
         _require(
             not os.path.samefile(source, destination),
             f"{label} path refers to the same file as the source EPUB: {destination}",
@@ -326,7 +326,7 @@ def replace_members(
             _require(allow_protected or not protected, f"Protected publication: {', '.join(protected)}")
             unknown = sorted(set(replacements) - names)
             _require(not unknown, f"Replacement target not in archive: {', '.join(unknown)}")
-            dir_targets = sorted(name for name in replacements if name.endswith("/") or archive.getinfo(name).is_dir())
+            dir_targets = sorted(name for name in replacements if archive.getinfo(name).is_dir())
             _require(not dir_targets, f"Cannot replace directory entries: {', '.join(dir_targets)}")
             _require("mimetype" not in replacements, "Replacing mimetype is not permitted")
 
@@ -353,15 +353,10 @@ def replace_members(
             check_zip(out_zip, stream)
             after = archive_hashes(out_zip)
 
-        replacement_hashes = {name: sha256(data).hexdigest() for name, data in replacements.items()}
-        for name, expected_hash in replacement_hashes.items():
-            _require(
-                after[name] == expected_hash,
-                f"Written member digest does not match requested bytes: {name}",
-            )
-        actual_changed = {name for name in before if before[name] != after[name]}
-        expected_changed = {name for name, digest in replacement_hashes.items() if digest != before[name]}
-        _require(actual_changed == expected_changed, "Archive member changes differ from requested replacements")
+        expected = before.copy()
+        expected.update((name, sha256(data).hexdigest()) for name, data in replacements.items())
+        _require(after == expected, "Written archive members differ from requested replacements")
+        actual_changed = {name for name in replacements if before[name] != after[name]}
 
         staged.chmod(0o600)
         output_digest = sha256_file(staged)

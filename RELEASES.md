@@ -1,3 +1,16 @@
+## v1.5.8 (2026-11-26)
+
+### EPUB Verification & Conversion Guidance
+
+- Verify surgical EPUB edits by comparing the complete output member digest map with the expected map. This checks for missing, added, or unexpectedly modified files before delivery.
+- Consolidate the conversion guidance for verified source metadata, post-conversion OPF language checks, and preservation of local XHTML language attributes.
+
+### Test Fixtures & Release History
+
+- Designate `tests/Testfile/` for local real-book acceptance tests. Track its ignore rules so fresh checkouts include the directory and local books, candidates, and reports stay out of Git.
+- Share generated EPUB and PNG fixtures between the unit and integration suites. Reuse the multi-chapter EPUB 2 fixture for both body editing and migration.
+- Consolidate 13 duplicate historical release notes in `RELEASES.md`.
+
 ## v1.5.7 (2026-11-26)
 
 - Check the saved EPUB language after conversion. Restore verified language tags when the converter shortens them or writes the process locale `C`. Use `und` when the publication language is unknown.

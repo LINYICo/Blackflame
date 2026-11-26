@@ -34,6 +34,8 @@ Invoke the skill naturally in your agent client:
 
 ## Development
 
+Use `tests/Testfile/` for local acceptance testing with real books. Place source books there and write candidates and reports to a separate subdirectory. Git ignores these local files. The automated suite builds its own fixtures and runs with the directory empty.
+
 Sync latest dependencies and run the test suite from the repository root:
 
 ```sh

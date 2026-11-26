@@ -8,7 +8,7 @@ import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from zipfile import ZIP_STORED, ZipFile
+from zipfile import ZipFile
 
 from bs4 import BeautifulSoup
 from epublib import EPUB
@@ -19,14 +19,12 @@ SCRIPTS = REPO_ROOT / "blackflame/scripts"
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from test_epub_safe import make_bilingual_epub2, make_bilingual_epub3, make_valid_png
+from epub_fixtures import DC_NS, NCX_NS, make_bilingual_epub3, make_multichapter_epub2, make_valid_png
 
 import epub_safe
 
 REQUIRE_EPUBCHECK = os.environ.get("BLACKFLAME_REQUIRE_EPUBCHECK") == "1"
 REQUIRE_RELEASE_ZIP = os.environ.get("BLACKFLAME_REQUIRE_RELEASE_ZIP") == "1"
-DC_NS = "http://purl.org/dc/elements/1.1/"
-NCX_NS = "http://www.daisy.org/z3986/2005/ncx/"
 MODIFIED = f".//{{{epub_safe.OPF}}}meta[@property='dcterms:modified']"
 EDITED_AT = "2026-11-25T00:00:01Z"
 
@@ -68,66 +66,6 @@ def _read_opf_summary(epub_path: Path) -> dict[str, str]:
         "date": (opf_root.findtext(f".//{{{DC_NS}}}date") or "").strip(),
         "rights": (opf_root.findtext(f".//{{{DC_NS}}}rights") or "").strip(),
     }
-
-
-def _make_multichapter_epub2(path: Path) -> None:
-    """Build a valid multi-chapter EPUB 2 fixture with nested NCX, fragments, opf:scheme, and cover."""
-    ch1 = (
-        '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">'
-        f'<html xmlns="{epub_safe.XHTML}" xml:lang="zh-CN">'
-        "<head><title>第一章</title></head>"
-        '<body><h1 id="c1">第一章</h1><p>第一章原始中文正文。</p></body></html>'
-    )
-    ch2 = (
-        '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">'
-        f'<html xmlns="{epub_safe.XHTML}" xml:lang="zh-CN">'
-        "<head><title>第二章</title></head>"
-        '<body><h1 id="c2">第二章</h1><h2 id="sec-2-1">第二节</h2><p>Second chapter original body.</p></body></html>'
-    )
-    with ZipFile(path, "w") as archive:
-        archive.writestr("mimetype", epub_safe.MEDIA_TYPE, compress_type=ZIP_STORED)
-        archive.writestr(
-            epub_safe.CONTAINER,
-            '<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
-            '<rootfiles><rootfile full-path="OEBPS/content.opf" '
-            'media-type="application/oebps-package+xml"/></rootfiles></container>',
-        )
-        archive.writestr(
-            "OEBPS/content.opf",
-            f'<package xmlns="{epub_safe.OPF}" version="2.0" unique-identifier="uid">'
-            f'<metadata xmlns:dc="{DC_NS}" xmlns:opf="{epub_safe.OPF}">'
-            "<dc:title>旧版多章节测试书</dc:title>"
-            "<dc:creator>Test Author</dc:creator>"
-            '<dc:identifier id="uid" opf:scheme="UUID">urn:uuid:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee</dc:identifier>'
-            "<dc:language>zh-CN</dc:language>"
-            "<dc:date>2020-05-01</dc:date>"
-            "<dc:rights>Copyright 2020 Original Publisher</dc:rights>"
-            '<meta name="cover" content="cov"/>'
-            "</metadata>"
-            "<manifest>"
-            '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>'
-            '<item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>'
-            '<item id="ch2" href="ch2.xhtml" media-type="application/xhtml+xml"/>'
-            '<item id="cov" href="cover.png" media-type="image/png"/>'
-            "</manifest>"
-            '<spine toc="ncx"><itemref idref="ch1"/><itemref idref="ch2"/></spine></package>',
-        )
-        archive.writestr(
-            "OEBPS/toc.ncx",
-            f'<ncx xmlns="{NCX_NS}" version="2005-1">'
-            '<head><meta name="dtb:uid" content="urn:uuid:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"/>'
-            '<meta name="dtb:depth" content="3"/><meta name="dtb:totalPageCount" content="0"/>'
-            '<meta name="dtb:maxPageNumber" content="0"/></head>'
-            "<docTitle><text>旧版多章节测试书</text></docTitle>"
-            "<navMap>"
-            '<navPoint id="np-1" playOrder="1"><navLabel><text>第一章</text></navLabel><content src="ch1.xhtml"/>'
-            '<navPoint id="np-2" playOrder="2"><navLabel><text>第二章</text></navLabel><content src="ch2.xhtml#c2"/>'
-            '<navPoint id="np-3" playOrder="3"><navLabel><text>第二节</text></navLabel><content src="ch2.xhtml#sec-2-1"/></navPoint>'
-            "</navPoint></navPoint></navMap></ncx>",
-        )
-        archive.writestr("OEBPS/ch1.xhtml", ch1)
-        archive.writestr("OEBPS/ch2.xhtml", ch2)
-        archive.writestr("OEBPS/cover.png", make_valid_png(20, 30))
 
 
 class RealToolIntegrationTests(unittest.TestCase):
@@ -283,14 +221,14 @@ class RealToolIntegrationTests(unittest.TestCase):
 
             src2 = root / "book2.epub"
             out2 = root / "edited2.epub"
-            make_bilingual_epub2(src2, body="EPUB2 原始段落。")
+            make_multichapter_epub2(src2)
             with ZipFile(src2) as zf:
                 raw2 = zf.read("OEBPS/ch1.xhtml")
-            new2 = raw2.replace("原始段落".encode(), "校对段落".encode(), 1)
+            new2 = raw2.replace("原始中文正文".encode(), "校对中文正文".encode(), 1)
             epub_safe.parse_xml(new2)
             epub_safe.replace_members(src2, out2, {"OEBPS/ch1.xhtml": new2})
             diff2 = epub_safe.compare_epubs(src2, out2, expected_changed={"OEBPS/ch1.xhtml"}, preserve_spine=True)
-            self.assertEqual(diff2["unchanged_entries"], 5)
+            self.assertEqual(diff2["unchanged_entries"], 6)
 
             if _epubcheck_available():
                 for s, o, tag in ((src3, out3, "e3"), (src2, out2, "e2")):
@@ -320,7 +258,7 @@ class RealToolIntegrationTests(unittest.TestCase):
             src2 = root / "legacy-v2.epub"
             migrated = root / "migrated-latest.epub"
             final_out = root / "final-latest.epub"
-            _make_multichapter_epub2(src2)
+            make_multichapter_epub2(src2)
             src_sha = epub_safe.sha256_file(src2)
             src_summary = _read_opf_summary(src2)
             self.assertEqual(src_summary["version"], "2.0")
