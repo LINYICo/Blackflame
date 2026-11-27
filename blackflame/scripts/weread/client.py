@@ -1,0 +1,109 @@
+"""Small synchronous client for the documented read-only gateway operations."""
+
+import http.client
+import json
+
+from .auth import WeReadError, checked_key
+
+HOST = "i.weread.qq.com"
+PATH = "/api/agent/gateway"
+SKILL_VERSION = "1.0.6"
+
+
+class WeReadClient:
+    def __init__(self, api_key: str):
+        self._key = checked_key(api_key)
+
+    def _request(self, api_name, **params):
+        for field in ("bookId", "bookid"):
+            if field in params and not (isinstance(params[field], str) and params[field].strip()):
+                raise WeReadError("A book ID is required.")
+        payload = {k: v for k, v in params.items() if v is not None}
+        payload.update(api_name=api_name, skill_version=SKILL_VERSION)
+        body = json.dumps(payload)
+        escaped_key = json.dumps(self._key)[1:-1]
+        if escaped_key in body:
+            raise WeReadError("Request parameters contain a credential.")
+        connection = http.client.HTTPSConnection(HOST, timeout=15)
+        try:
+            connection.request(
+                "POST", PATH, body, {"Authorization": f"Bearer {self._key}", "Content-Type": "application/json"}
+            )
+            response = connection.getresponse()
+            if response.status in (401, 403):
+                raise WeReadError("Authentication or access denied.")
+            if response.status == 429:
+                raise WeReadError("Rate limited. Try again later.")
+            if response.status != 200:
+                raise WeReadError(f"Gateway HTTP error {response.status}.")
+            data = json.loads(response.read())
+        except TimeoutError:
+            error = "Gateway request timed out."
+        except (OSError, http.client.HTTPException):
+            error = "Gateway connection failed."
+        except (ValueError, RecursionError):
+            error = "Invalid gateway JSON."
+        else:
+            if not isinstance(data, dict):
+                raise WeReadError("Invalid gateway response.")
+            code = data.get("errcode", 0)
+            if type(code) is not int:
+                raise WeReadError("Invalid gateway error code.")
+            if code:
+                raise WeReadError(f"WeRead business error {code}.")
+            if escaped_key in json.dumps(data):
+                raise WeReadError("Invalid gateway response.")
+            return data
+        finally:
+            connection.close()
+        raise WeReadError(error)
+
+    def book(self, book_id):
+        return self._request("/book/info", bookId=book_id)
+
+    def chapters(self, book_id):
+        return self._request("/book/chapterinfo", bookId=book_id)
+
+    def shelf(self):
+        return self._request("/shelf/sync")
+
+    def progress(self, book_id):
+        return self._request("/book/getprogress", bookId=book_id)
+
+    def highlights(self, book_id):
+        return self._request("/book/bookmarklist", bookId=book_id)
+
+    def search(self, keyword, context, scope=10, count=None, cursor=None):
+        if not keyword.strip() or not context.strip() or scope not in (0, 6, 10, 14, 16):
+            raise WeReadError("Supply a search term, context and supported book search scope.")
+        return self._page("/store/search", "maxIdx", cursor, count, keyword=keyword, context=context, scope=scope)
+
+    def notebooks(self, count=None, cursor=None):
+        return self._page("/user/notebooks", "lastSort", cursor, count)
+
+    def thoughts(self, book_id, count=None, cursor=None):
+        return self._page("/review/list/mine", "synckey", cursor, count, bookid=book_id)
+
+    def _page(self, api_name, cursor_field, cursor, count, **params):
+        if (count is not None and (type(count) is not int or count < 1)) or (
+            cursor is not None and (type(cursor) is not int or cursor < 0)
+        ):
+            raise WeReadError("Count must be positive and cursor nonnegative.")
+        data = self._request(api_name, count=count, **params, **{cursor_field: cursor})
+        next_cursor = None
+        if data.get("hasMore") not in (0, 1):
+            raise WeReadError("Invalid gateway pagination flag.")
+        if data["hasMore"]:
+            try:
+                if cursor_field == "maxIdx":
+                    books = next(group["books"] for group in reversed(data["results"]) if group.get("books"))
+                    next_cursor = books[-1]["searchIdx"]
+                elif cursor_field == "lastSort":
+                    next_cursor = data["books"][-1]["sort"]
+                else:
+                    next_cursor = data["synckey"]
+            except (KeyError, TypeError, IndexError, AttributeError, StopIteration):
+                pass
+            if type(next_cursor) is not int or next_cursor < 0 or next_cursor == cursor:
+                raise WeReadError("Missing or repeated gateway pagination cursor.")
+        return {"data": data, "next_cursor": next_cursor}

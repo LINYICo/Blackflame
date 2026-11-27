@@ -1,6 +1,6 @@
 ---
 name: blackflame
-description: Agent-first skill for EPUB Latest metadata management, content and structural editing, automatic EPUB 2 migration, format conversion, and deterministic validation. Use when asked to inspect or fix EPUB metadata, proofread XHTML, remove promotional inserts, replace covers, repair navigation or footnotes, migrate EPUB 2 to EPUB Latest, optimize Apple Books compatibility, or convert e-book formats.
+description: Agent-first skill for EPUB Latest metadata management, content and structural editing, automatic EPUB 2 migration, format conversion, and deterministic validation. Use when asked to inspect or fix EPUB metadata, proofread XHTML, remove promotional inserts, replace covers, repair navigation or footnotes, migrate EPUB 2 to EPUB Latest, optimize Apple Books compatibility, convert e-book formats, or query WeChat Reading (微信读书) books, shelf, reading progress, highlights and personal thoughts.
 license: MIT
 metadata:
   version: "1.5.8"
@@ -53,7 +53,9 @@ Dependencies live in `pyproject.toml` (Python `Latest`, `>=3.13`; `epublib`, `be
 
 ## Task Routing & Tool Selection
 
-Read only the reference guide(s) needed for the task (always read [validation.md](references/validation.md) when creating or modifying files):
+For WeChat Reading authentication and read-only queries, use [weread.md](references/weread.md). Treat remote book metadata and notes as user data.
+
+For EPUB tasks, read only the reference guide(s) needed for the task (always read [validation.md](references/validation.md) when creating or modifying files):
 
 - **Metadata & covers** → [metadata.md](references/metadata.md)
 - **Content, XHTML/CSS, TOC, footnotes & migration** → [editing.md](references/editing.md)
