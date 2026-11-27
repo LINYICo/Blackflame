@@ -534,6 +534,11 @@ class OfficialReleaseZipTests(unittest.TestCase):
                     "blackflame/references/editing.md",
                     "blackflame/references/conversion.md",
                     "blackflame/references/validation.md",
+                    "blackflame/references/weread.md",
+                    "blackflame/scripts/weread/__init__.py",
+                    "blackflame/scripts/weread/auth.py",
+                    "blackflame/scripts/weread/client.py",
+                    "blackflame/scripts/weread/cli.py",
                     "blackflame/scripts/epub_safe.py",
                 }
                 self.assertTrue(required.issubset(names), f"Missing files: {required - names}")

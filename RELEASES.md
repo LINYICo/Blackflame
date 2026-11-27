@@ -1,3 +1,17 @@
+## v1.5.9 (2026-11-27)
+
+### WeChat Reading Gateway
+
+- Include the official read-only gateway client and JSON CLI for search, book details, chapters, shelf, progress, notebooks, highlights and personal thoughts. Resolve credentials from the environment or macOS Keychain.
+- Separate transport failures from JSON decoding errors. Validate search inputs, pagination flags, page collections and continuation cursors. Verify authentication against the notebook overview schema, including its book and note totals.
+
+### Agent Guidance & Verification
+
+- Document supported search scopes, minimal search context, cursor history and non-blocking upgrade notices. Apply the skill's untrusted-content rules to every gateway response field.
+- Add regression coverage for malformed inputs, early transport failures, pagination and authentication. Check the WeChat Reading modules and reference guide in the standalone release archive.
+- Verified all eight read-only endpoints and five supported search scopes from the release archive. Tested ebook search continuation and Keychain set/clear with an isolated test item. All 33 local tests passed, including the EPUB and standalone archive checks.
+- A live audiobook search with a one-item page advertised more results without a cursor. The client stops with a diagnostic. Aggregate search overviews without a pagination flag return their first page without a continuation.
+
 ## v1.5.8 (2026-11-26)
 
 ### EPUB Verification & Conversion Guidance

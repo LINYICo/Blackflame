@@ -16,6 +16,8 @@ Install the [official EPUBCheck CLI](https://github.com/w3c/epubcheck/releases) 
 
 ## Capabilities & Tech Stack
 
+- **WeChat Reading**: Query the official read-only gateway for search, book details, chapters, shelf, progress, notebooks, highlights and personal thoughts. Use an environment-injected credential or macOS Keychain (via the existing macOS-only `keyring` dependency). See the [WeChat Reading guide](blackflame/references/weread.md).
+
 - **Metadata**: Inspect, verify, and edit EPUB title, author, translator, ISBN, publisher, language, series, and cover artwork.
 - **Editing**: Proofread XHTML, fix typography, remove promotional inserts, repair TOC/navigation/footnotes, automatically migrate EPUB 2 to EPUB Latest, and optimize Apple Books compatibility.
 - **Conversion**: Convert e-book formats directly via the `ebook-convert` CLI, defaulting EPUB outputs to EPUB Latest.

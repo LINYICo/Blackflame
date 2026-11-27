@@ -99,6 +99,16 @@ class GatewayTests(unittest.TestCase):
                 self.assertIsNone(fetch(*args, cursor=page["next_cursor"], count=2)["next_cursor"])
                 self.check_request(path, **params, **{cursor_name: 8}, count=2)
 
+    def test_search_overview_and_unusable_audio_continuation(self):
+        data = {"sid": "session", "results": [{"scope": 17, "books": []}]}
+        self.reply(data)
+        self.assertEqual(self.api.search("k", "ctx", scope=0), {"data": data, "next_cursor": None})
+        with self.assertRaisesRegex(auth.WeReadError, "pagination flag"):
+            self.api.search("k", "ctx", scope=10)
+        self.reply({"hasMore": 1, "results": [{"scope": 14, "currentCount": 1}]})
+        with self.assertRaisesRegex(auth.WeReadError, "pagination cursor"):
+            self.api.search("k", "ctx", scope=14, count=1)
+
     def test_http_and_transport_errors(self):
         self.response.read.return_value = b"unavailable"
         for status, message in [(403, "denied"), (401, "denied"), (429, "Rate limited"), (302, "302"), (503, "503")]:
@@ -137,7 +147,12 @@ class GatewayTests(unittest.TestCase):
     def test_cli_json_and_exit_status(self):
         self.enterContext(patch.dict(os.environ, {"WEREAD_API_KEY": KEY}))
         for args, response, expected, status in [
-            (["auth", "verify"], {"hasMore": 0, "books": []}, {"verified": True}, 0),
+            (
+                ["auth", "verify"],
+                {"hasMore": 0, "books": [], "totalBookCount": 0, "totalNoteCount": 0},
+                {"verified": True},
+                0,
+            ),
             (["book", "123"], {"title": "三体"}, {"title": "三体"}, 0),
             (["book", "123"], {"errcode": -1, "errmsg": KEY}, {"error": "微信读书业务错误 -1（HTTP 200）。"}, 1),
         ]:
@@ -151,6 +166,57 @@ class GatewayTests(unittest.TestCase):
             cli.main(["auth", "set", KEY])
         self.assertEqual(caught.exception.code, 2)
         self.assertNotIn(KEY, json.loads(err.getvalue())["error"])
+
+    def test_network_failure_before_response(self):
+        self.connection.request.side_effect = ValueError(KEY)
+        with self.assertRaisesRegex(auth.WeReadError, "Invalid gateway request") as caught:
+            self.api.shelf()
+        self.assertIsNone(caught.exception.__context__)
+        self.connection.close.assert_called_once()
+        self.connection.getresponse.assert_not_called()
+
+    def test_invalid_parameters_do_not_send_requests(self):
+        for args in [(None, "ctx"), ("k", []), ("k", " "), ("k", "ctx", False), ("k", "ctx", 10.0)]:
+            with self.assertRaises(auth.WeReadError):
+                self.api.search(*args)
+        for value in [True, -1, 2.5, "1"]:
+            with self.assertRaises(auth.WeReadError):
+                self.api.notebooks(cursor=value)
+            with self.assertRaises(auth.WeReadError):
+                self.api.notebooks(count=value)
+        with self.assertRaises(auth.WeReadError):
+            self.api.notebooks(count=0)
+        with self.assertRaises(auth.WeReadError):
+            self.api.thoughts(None)
+        self.factory.assert_not_called()
+
+    def test_malformed_page_flags_and_cursors(self):
+        for flag in [False, 1.0, "1", 2]:
+            self.reply({"hasMore": flag, "books": [{"sort": 2}]})
+            with self.assertRaises(auth.WeReadError):
+                self.api.notebooks()
+        for cursor in [False, 0, -1, 1.0, "2"]:
+            self.reply({"hasMore": 1, "reviews": [], "synckey": cursor})
+            with self.assertRaises(auth.WeReadError):
+                self.api.thoughts("123")
+        self.reply({"hasMore": 1, "results": [{"books": [{"searchIdx": 1}]}]})
+        with self.assertRaisesRegex(auth.WeReadError, "backwards"):
+            self.api.search("k", "ctx", cursor=3)
+        self.reply({"hasMore": 1, "books": [{"sort": 5}]})
+        with self.assertRaisesRegex(auth.WeReadError, "backwards"):
+            self.api.notebooks(cursor=3)
+        self.reply({"hasMore": 0, "books": {}})
+        with self.assertRaises(auth.WeReadError):
+            self.api.notebooks()
+
+    def test_verify_requires_official_notebook_fields(self):
+        self.enterContext(patch.dict(os.environ, {"WEREAD_API_KEY": KEY}))
+        for changes in [{"books": None}, {"totalBookCount": False}, {"totalNoteCount": -1}, {"totalNoteCount": None}]:
+            self.reply({"hasMore": 0, "books": [], "totalBookCount": 0, "totalNoteCount": 0} | changes)
+            with redirect_stdout(io.StringIO()) as out, redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(cli.main(["auth", "verify"]), 1)
+                self.assertFalse(out.getvalue())
+                self.assertIn("error", json.loads(err.getvalue()))
 
     def test_cli_hidden_input_unavailable(self):
         with (

@@ -14,7 +14,9 @@ class WeReadError(Exception):
 
 
 def checked_key(value: str) -> str:
-    if not (value.startswith("wrk-") and len(value) > 4 and all("!" <= c <= "~" for c in value)):
+    if not (
+        isinstance(value, str) and value.startswith("wrk-") and len(value) > 4 and all("!" <= c <= "~" for c in value)
+    ):
         raise WeReadError("Invalid API key format.")
     return value
 
