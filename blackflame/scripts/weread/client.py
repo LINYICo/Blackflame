@@ -25,6 +25,7 @@ class WeReadClient:
         if escaped_key in body:
             raise WeReadError("Request parameters contain a credential.")
         connection = http.client.HTTPSConnection(HOST, timeout=15)
+        connection.set_debuglevel(0)  # Embedding applications may enable http.client header tracing.
         try:
             connection.request(
                 "POST", PATH, body, {"Authorization": f"Bearer {self._key}", "Content-Type": "application/json"}
@@ -34,26 +35,27 @@ class WeReadClient:
                 raise WeReadError("Authentication or access denied.")
             if response.status == 429:
                 raise WeReadError("Rate limited. Try again later.")
-            if response.status != 200:
+            if 300 <= response.status < 400:
                 raise WeReadError(f"Gateway HTTP error {response.status}.")
             data = json.loads(response.read())
-        except TimeoutError:
-            error = "Gateway request timed out."
-        except (OSError, http.client.HTTPException):
-            error = "Gateway connection failed."
-        except (ValueError, RecursionError):
-            error = "Invalid gateway JSON."
-        else:
             if not isinstance(data, dict):
                 raise WeReadError("Invalid gateway response.")
             code = data.get("errcode", 0)
             if type(code) is not int:
                 raise WeReadError("Invalid gateway error code.")
             if code:
-                raise WeReadError(f"WeRead business error {code}.")
-            if escaped_key in json.dumps(data):
+                raise WeReadError(f"微信读书业务错误 {code}（HTTP {response.status}）。")
+            if response.status != 200:
+                raise WeReadError(f"Gateway HTTP error {response.status}.")
+            if escaped_key in json.dumps(data, allow_nan=False):
                 raise WeReadError("Invalid gateway response.")
             return data
+        except TimeoutError:
+            error = "Gateway request timed out."
+        except (OSError, http.client.HTTPException):
+            error = "Gateway connection failed."
+        except (ValueError, RecursionError):
+            error = "Invalid gateway JSON." if response.status == 200 else f"Gateway HTTP error {response.status}."
         finally:
             connection.close()
         raise WeReadError(error)

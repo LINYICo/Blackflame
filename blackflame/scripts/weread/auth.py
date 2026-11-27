@@ -1,7 +1,9 @@
 """Resolve WeRead credentials without file or command-line storage."""
 
+import getpass
 import os
 import sys
+import warnings
 
 SERVICE = "Blackflame.WeRead"
 ACCOUNT = "api-key"
@@ -47,6 +49,18 @@ def read_key() -> str:
 
 def save_key(value: str):
     _credential("set_password", checked_key(value))
+
+
+def configure_key():
+    value = os.environ.get("WEREAD_API_KEY")
+    if value is None:
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", getpass.GetPassWarning)
+                value = getpass.getpass("WeRead API key: ")
+        except (getpass.GetPassWarning, EOFError, KeyboardInterrupt):
+            raise WeReadError("Secure input unavailable or interrupted.") from None
+    save_key(value)
 
 
 def clear_key():

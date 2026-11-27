@@ -10,10 +10,9 @@
 uv sync
 uv run --no-sync python -m scripts.weread.cli auth set
 uv run --no-sync python -m scripts.weread.cli auth verify
-uv run --no-sync python -m scripts.weread.cli auth clear
 ```
 
-macOS 的 set 和 clear 操作系统钥匙串中 Blackflame.WeRead 的 api-key 项。各平台均优先读取进程环境中的 WEREAD_API_KEY，可由密钥管理器注入；macOS 的 set 也可从此变量写入钥匙串。clear 后仍需在提供环境变量的位置移除它，当前 shell 可用 `unset WEREAD_API_KEY`。verify 读取一条笔记本概览，仅输出验证结果。
+macOS 的 set 和 clear 操作系统钥匙串中 Blackflame.WeRead 的 api-key 项。各平台均优先读取进程环境中的 WEREAD_API_KEY，可由密钥管理器注入；macOS 的 set 也可从此变量写入钥匙串。仅在用户要求移除已保存凭证时运行 `auth clear`。清除后仍需在提供环境变量的位置移除它，当前 shell 可用 `unset WEREAD_API_KEY`。verify 读取一条笔记本概览，仅输出验证结果。
 
 ## 查询
 

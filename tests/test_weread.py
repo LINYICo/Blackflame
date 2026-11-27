@@ -3,7 +3,7 @@ import json
 import os
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from blackflame.scripts.weread import auth, cli, client
 
@@ -59,6 +59,7 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual((method, path), ("POST", "/api/agent/gateway"))
         self.assertEqual(json.loads(body), {"api_name": name, "skill_version": "1.0.6", **params})
         self.assertEqual(headers, {"Authorization": f"Bearer {KEY}", "Content-Type": "application/json"})
+        self.connection.set_debuglevel.assert_called_with(0)
         self.connection.close.assert_called()
 
     def test_book_and_shelf_calls_preserve_fields(self):
@@ -99,20 +100,31 @@ class GatewayTests(unittest.TestCase):
                 self.check_request(path, **params, **{cursor_name: 8}, count=2)
 
     def test_http_and_transport_errors(self):
+        self.response.read.return_value = b"unavailable"
         for status, message in [(403, "denied"), (401, "denied"), (429, "Rate limited"), (302, "302"), (503, "503")]:
             self.response.status = status
             with self.assertRaisesRegex(auth.WeReadError, message):
                 self.api.shelf()
+        self.response.status = 499
+        self.reply({"errcode": -2003, "errlog": KEY})
+        with self.assertRaisesRegex(auth.WeReadError, "-2003（HTTP 499）"):
+            self.api.book("missing")
         self.connection.getresponse.side_effect = TimeoutError(KEY)
         with self.assertRaisesRegex(auth.WeReadError, "timed out"):
             self.api.shelf()
         self.connection.getresponse.side_effect = OSError(KEY)
         with self.assertRaisesRegex(auth.WeReadError, "connection failed"):
             self.api.shelf()
-        self.assertEqual(self.connection.request.call_count, 7)
+        self.assertEqual(self.connection.request.call_count, 8)
 
     def test_malformed_business_and_credential_echo_responses(self):
-        for raw in [b"broken", b"[]", b'{"errcode":-17}', json.dumps({"books": [{"title": KEY}]}).encode()]:
+        for raw in [
+            b"broken",
+            b"[]",
+            b'{"progress":NaN}',
+            b'{"errcode":-17}',
+            json.dumps({"books": [{"title": KEY}]}).encode(),
+        ]:
             self.response.read.return_value = raw
             with self.assertRaises(auth.WeReadError) as caught:
                 self.api.shelf()
@@ -127,7 +139,7 @@ class GatewayTests(unittest.TestCase):
         for args, response, expected, status in [
             (["auth", "verify"], {"hasMore": 0, "books": []}, {"verified": True}, 0),
             (["book", "123"], {"title": "三体"}, {"title": "三体"}, 0),
-            (["book", "123"], {"errcode": -1, "errmsg": KEY}, {"error": "WeRead business error -1."}, 1),
+            (["book", "123"], {"errcode": -1, "errmsg": KEY}, {"error": "微信读书业务错误 -1（HTTP 200）。"}, 1),
         ]:
             self.reply(response)
             with redirect_stdout(io.StringIO()) as out, redirect_stderr(io.StringIO()) as err:
@@ -143,8 +155,8 @@ class GatewayTests(unittest.TestCase):
     def test_cli_hidden_input_unavailable(self):
         with (
             patch.dict(os.environ, {}, clear=True),
-            patch.object(cli.getpass, "getpass", side_effect=cli.getpass.GetPassWarning),
-            patch.object(auth, "save_key", Mock()) as save,
+            patch.object(auth.getpass, "getpass", side_effect=auth.getpass.GetPassWarning),
+            patch.object(auth, "save_key") as save,
             redirect_stderr(io.StringIO()),
         ):
             self.assertEqual(cli.main(["auth", "set"]), 1)
